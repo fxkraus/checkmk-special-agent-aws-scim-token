@@ -1,0 +1,54 @@
+# Dependabot configuration — weekly dependency updates.
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Minor/patch updates are grouped into a single PR per ecosystem. uv and
+# pre-commit updates are auto-merged by the companion workflow
+# (.github/workflows/dependabot-auto-merge.yml) once the CI checks pass; GitHub
+# Actions updates and all major updates need a manual review.
+#
+# The Checkmk build image (build/Dockerfile) uses the floating 2.5.0-latest
+# tag on purpose (latest stable patch release), so there is no Docker entry.
+# Do not pin it for Dependabot: it compares 2.5.0pNN as a pre-release of 2.5.0
+# and the daily builds 2.5.0-YYYY.MM.DD as the release 2.5.0.YYYY.MM.DD, so it
+# would propose daily builds as "patch" updates.
+
+version: 2
+updates:
+  # ── Python dev dependencies (pyproject.toml + uv.lock) ─────────────────────
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  # ── pre-commit hooks ───────────────────────────────────────────────────────
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"

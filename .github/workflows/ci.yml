@@ -1,0 +1,106 @@
+# Lint, scan for secrets, test and build the MKP on every push to main and
+# every pull request (including Dependabot branches). All jobs are required
+# status checks that gate the Dependabot auto-merge.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs exactly the hooks from .pre-commit-config.yaml
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      # --locked fails the job if uv.lock is out of date with pyproject.toml
+      - name: Run pre-commit
+        run: uv run --locked --only-group lint pre-commit run --all-files --show-diff-on-failure
+
+  # Scans the git history of the pushed / pull request commits
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gitleaks-action lists the PR's commits via the API
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e  # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Keep in sync with the gitleaks rev in .pre-commit-config.yaml
+          GITLEAKS_VERSION: "8.30.1"
+          # PR comments would need pull-requests: write
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  # Python tests against the real Checkmk libraries of every supported
+  # version. -latest tags keep the matrix free of version maintenance.
+  pytest:
+    name: pytest (Checkmk ${{ matrix.checkmk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - checkmk: "2.4"
+            image: docker.io/checkmk/check-mk-cloud:2.4.0-latest
+          - checkmk: "2.5"
+            # Same edition as the MKP build image (build/Dockerfile)
+            image: docker.io/checkmk/check-mk-ultimatemt:2.5.0-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run pytest
+        run: docker run --rm -v "$PWD:/source:ro" --entrypoint /source/tests/run-pytest.sh "$IMAGE"
+        env:
+          IMAGE: ${{ matrix.image }}
+
+  # Packages the MKP with the latest Checkmk 2.5 patch release (build/Dockerfile).
+  # On main, the MKP is kept as a workflow artifact for each commit.
+  mkp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build Checkmk build image (cached)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: build/Dockerfile
+          tags: checkmk-aws-scim-token-build:ci
+          load: true
+          pull: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build MKP
+        run: docker run --rm -v "$PWD:/source" checkmk-aws-scim-token-build:ci
+
+      - name: Upload MKP
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: aws_scim_token-mkp-${{ github.sha }}
+          path: "*.mkp"
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Entry point for the AWS SCIM token special agent."""
+
+import sys
+
+from cmk_addons.plugins.aws_scim_token.special_agents.agent_aws_scim_token import main
+
+if __name__ == "__main__":
+    sys.exit(main())

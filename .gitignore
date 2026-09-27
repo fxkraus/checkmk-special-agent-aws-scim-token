@@ -1,0 +1,31 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build artefacts
+*.mkp
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Credentials and local state — never commit these
+.env
+.env.*
+.aws/
+credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.tfstate*
+*.log
+.coverage
+htmlcov/

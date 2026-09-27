@@ -1,0 +1,57 @@
+# Linters and secret scanning. CI runs exactly these hooks
+# (.github/workflows/ci.yml, job "lint"), so a clean local run means a clean
+# CI run. Setup: see "Pre-commit hooks" in README.md.
+minimum_pre_commit_version: "4.0.0"
+
+repos:
+  # Secrets: blocks commits that contain credentials or private keys
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        # Checkmk libraries are not installable; `cmk.*` imports are ignored
+        # (pyproject.toml) and the plugin is exercised by the pytest jobs.
+        files: ^(build|cmk_addons)/.*\.py$
+        additional_dependencies: ["pydantic==2.13.5"]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
+
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
