@@ -246,9 +246,10 @@ that requires these checks.
 
 ## Release
 
-Releases are fully automatic. Pull requests are squash-merged with the PR
-title as the commit message, and the PR title must be a
-[Conventional Commit](https://www.conventionalcommits.org/). After every push
+Releases are fully automatic. Pull requests are squash-merged with only the
+PR title as the commit message (the PR body is not included), and the PR
+title must be a [Conventional Commit](https://www.conventionalcommits.org/).
+Mark a breaking change in a PR title with `!`, e.g. `feat!: …`. After every push
 to `main`, once all CI jobs pass, the `release` job derives the next version
 from the commits since the last `v*` tag:
 
