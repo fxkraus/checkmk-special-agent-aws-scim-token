@@ -1,6 +1,7 @@
 # Lint, scan for secrets, test and build the MKP on every push to main and
 # every pull request (including Dependabot branches). All jobs are required
-# status checks that gate the Dependabot auto-merge.
+# status checks that gate the Dependabot auto-merge. On main, the release job
+# publishes a new version when the merged commits call for one.
 name: CI
 
 on:
@@ -104,3 +105,79 @@ jobs:
           path: "*.mkp"
           if-no-files-found: error
           retention-days: 90
+
+  # Releases from Conventional Commits once every other job passed on main:
+  # fix/perf/refactor → patch, feat → minor, "!" or BREAKING CHANGE → major;
+  # docs/ci/build/chore/test commits alone produce no release. The version
+  # exists only as the git tag, which the MKP build reads. Tags created with
+  # GITHUB_TOKEN trigger no further workflows, so build and release happen here.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, secrets, pytest, mkp]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the tag and the GitHub release
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0   # all commits and tags to derive the next version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      # commitizen exits 21 when no commit since the last tag warrants a release
+      - name: Determine next version
+        id: version
+        run: |
+          set -o pipefail
+          if last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
+            rc=0
+            next=$(uv run --locked --only-group release cz bump --get-next) || rc=$?
+            if [[ "${rc}" -eq 21 ]]; then
+              echo "No release-worthy commits since ${last}"
+              exit 0
+            fi
+            [[ "${rc}" -eq 0 ]] || exit "${rc}"
+            range=(--start-rev "${last}")
+          else
+            next=1.0.0
+            range=()
+          fi
+          uv run --locked --only-group release cz changelog --dry-run \
+            --unreleased-version "v${next}" "${range[@]}" | tail -n +2 > "${RUNNER_TEMP}/notes.md"
+          echo "Next version: ${next}"
+          echo "next=${next}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        if: steps.version.outputs.next
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build Checkmk build image (cached)
+        if: steps.version.outputs.next
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: build/Dockerfile
+          tags: checkmk-aws-scim-token-build:ci
+          load: true
+          pull: true
+          cache-from: type=gha
+
+      # The local tag makes the build pick up the release version
+      - name: Build MKP
+        if: steps.version.outputs.next
+        run: |
+          git tag "v${NEXT}"
+          docker run --rm -v "$PWD:/source" checkmk-aws-scim-token-build:ci
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+
+      - name: Create release
+        if: steps.version.outputs.next
+        run: gh release create "v${NEXT}" ./*.mkp --target "${GITHUB_SHA}" --title "v${NEXT}" --notes-file "${RUNNER_TEMP}/notes.md"
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

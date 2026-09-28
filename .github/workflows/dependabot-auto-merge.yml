@@ -7,7 +7,8 @@
 # before CI has finished):
 #   - Settings → General → "Allow auto-merge" enabled
 #   - A branch ruleset on main requiring the CI checks (lint, secrets,
-#     pytest (Checkmk 2.4), pytest (Checkmk 2.5), mkp) to pass before merging
+#     pytest (Checkmk 2.4), pytest (Checkmk 2.5), mkp, pr-title) to pass
+#     before merging
 name: Dependabot Auto-Merge
 
 on: pull_request

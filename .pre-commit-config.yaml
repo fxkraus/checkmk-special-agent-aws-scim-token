@@ -2,8 +2,16 @@
 # (.github/workflows/ci.yml, job "lint"), so a clean local run means a clean
 # CI run. Setup: see "Pre-commit hooks" in README.md.
 minimum_pre_commit_version: "4.0.0"
+# `pre-commit install` sets up both the file checks and the commit message check
+default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
+  # Commit messages must be Conventional Commits; they drive the releases
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.19.0
+    hooks:
+      - id: commitizen
+
   # Secrets: blocks commits that contain credentials or private keys
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
