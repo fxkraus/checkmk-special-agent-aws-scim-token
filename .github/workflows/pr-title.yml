@@ -1,0 +1,23 @@
+# PRs are squash-merged with the PR title as the commit message, so the title
+# decides the next release (see the release job in ci.yml). This check keeps it
+# a valid Conventional Commit and is a required status check on main.
+#
+# pull_request_target also runs for PRs from forks. It is safe here because the
+# job never checks out or executes code from the pull request.
+name: PR Title
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+
+permissions: {}
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50  # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

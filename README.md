@@ -188,18 +188,18 @@ checkmk-special-agent-aws-scim-token/
 ├── .github/
 │   ├── dependabot.yml                          # Weekly uv, pre-commit and Actions updates
 │   └── workflows/
-│       ├── ci.yml                              # Lint, secret scan, tests (CMK 2.4 + 2.5), MKP build
-│       ├── release.yml                         # Build and publish the MKP on version tags
+│       ├── ci.yml                              # Lint, secret scan, tests (CMK 2.4 + 2.5), MKP build, release
+│       ├── pr-title.yml                        # PR title must be a Conventional Commit
 │       └── dependabot-auto-merge.yml           # Auto-merge minor/patch uv + pre-commit updates
 ├── .pre-commit-config.yaml                     # Linters + secret scan (local and CI)
 ├── Makefile                                    # lint / secrets / test / build
-├── pyproject.toml                              # uv dependency groups + ruff + mypy config
+├── pyproject.toml                              # uv dependency groups + commitizen, ruff, mypy config
 └── uv.lock                                     # Reproducible dev env
 ```
 
 ## Development
 
-Python dev dependencies (pytest, ruff, mypy, pre-commit) are declared in
+Python dev dependencies (pytest, ruff, mypy, pre-commit, commitizen) are declared in
 `pyproject.toml` and pinned in `uv.lock`. Create the local `.venv` and enable
 the hooks in your clone before the first commit:
 
@@ -227,6 +227,7 @@ CI runs exactly the same hooks, so a clean local run means a clean CI run.
 
 | Hook | Checks |
 |------|--------|
+| commitizen | commit message is a [Conventional Commit](https://www.conventionalcommits.org/) (`commit-msg` stage) |
 | gitleaks, detect-private-key | secrets and private keys in staged changes |
 | ruff (check + format) | Python lint and formatting |
 | mypy | type checks for the plugin and build script |
@@ -238,29 +239,33 @@ CI runs exactly the same hooks, so a clean local run means a clean CI run.
 ## CI
 
 Every push to `main` and every pull request runs `lint`, `secrets`,
-`pytest (Checkmk 2.4)`, `pytest (Checkmk 2.5)` and `mkp`. For Dependabot
-auto-merge to wait for them, enable **Settings → General → Allow auto-merge**
-and add a branch ruleset on `main` that requires these checks.
+`pytest (Checkmk 2.4)`, `pytest (Checkmk 2.5)` and `mkp`; pull requests also
+run `pr-title`. For Dependabot auto-merge to wait for them, enable
+**Settings → General → Allow auto-merge** and add a branch ruleset on `main`
+that requires these checks.
 
 ## Release
 
-Releases are built from version tags:
+Releases are fully automatic. Pull requests are squash-merged with only the
+PR title as the commit message (the PR body is not included), and the PR
+title must be a [Conventional Commit](https://www.conventionalcommits.org/).
+Mark a breaking change in a PR title with `!`, e.g. `feat!: …`. After every push
+to `main`, once all CI jobs pass, the `release` job derives the next version
+from the commits since the last `v*` tag:
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+| Commit | Release |
+|--------|---------|
+| `fix:`, `perf:`, `refactor:` | patch (`1.0.0` → `1.0.1`) |
+| `feat:` | minor (`1.0.0` → `1.1.0`) |
+| `feat!:`, `fix!:` or a `BREAKING CHANGE:` footer | major (`1.0.0` → `2.0.0`) |
+| `docs:`, `ci:`, `build:`, `chore:`, `style:`, `test:` | no release |
 
-The **Release MKP** workflow packages the MKP with the real `mkp` tool in the
-Checkmk 2.5 image and attaches it to a GitHub Release with generated release
-notes. The package version is taken from the tag; untagged builds get a
-numeric version derived from the commit hash.
-
-> [!WARNING]
-> The tag must be a valid Checkmk version such as `v1.2.3`, `v1.2.3p1`
-> (patch), `v1.2.3i1` (innovation, marked as pre-release) or `v1.2.3b1`
-> (beta, marked as pre-release). Suffixes like `-alpha.1` or `-rc1` crash the
-> Checkmk server when it parses the version, so the build rejects them.
+It then tags the commit, builds the MKP with the real `mkp` tool in the
+Checkmk 2.5 image and publishes a GitHub Release with the MKP and release
+notes generated from the commits. The version exists only as the git tag;
+nothing is committed back. The [Releases](https://github.com/fxkraus/checkmk-special-agent-aws-scim-token/releases)
+page is the changelog. Untagged builds get a numeric version derived from the
+commit hash.
 
 ## License
 

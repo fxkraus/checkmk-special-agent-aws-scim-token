@@ -12,9 +12,12 @@ requires-python = ">=3.12"
 test = ["pytest==9.1.1"]
 # Used by the CI lint job
 lint = ["pre-commit==4.6.2"]
+# Used by the CI release job to derive the next version from the commits
+release = ["commitizen==4.19.0"]
 dev = [
     { include-group = "test" },
     { include-group = "lint" },
+    { include-group = "release" },
     "ruff==0.16.8",
     "mypy==2.3.1",
 ]
@@ -22,6 +25,16 @@ dev = [
 [tool.uv]
 package = false
 default-groups = ["dev"]
+
+# =============================================================================
+# Commitizen — Conventional Commits. The version lives only in git tags (vX.Y.Z);
+# the CI release job tags and releases, nothing is written back to the repo.
+# =============================================================================
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "scm"
+tag_format = "v$version"
 
 # =============================================================================
 # Ruff — fast Python linter and formatter.
