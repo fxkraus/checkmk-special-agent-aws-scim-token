@@ -97,6 +97,14 @@ class TestCheck:
     def test_naive_expiry_treated_as_utc(self):
         assert _states(_run([{"name": "t", "expiry": "2026-09-01T00:00:00"}])) == [State.OK]
 
+    def test_event_description_in_details(self):
+        [result, _] = _run([{"name": "t", "expiry": _expiry(60), "detail": "Your SCIM token expires soon."}])
+        assert result.details == f"{result.summary}\nAWS Health event: Your SCIM token expires soon."
+
+    def test_details_default_to_summary_without_description(self):
+        [result, _] = _run([{"name": "t", "expiry": _expiry(60)}])
+        assert result.details == result.summary
+
     def test_error_is_crit_and_not_masked_by_ok_placeholder(self):
         results = _run([{"error": "AccessDenied"}])
         assert _states(results) == [State.CRIT]

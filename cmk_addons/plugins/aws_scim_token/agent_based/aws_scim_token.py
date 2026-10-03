@@ -98,6 +98,8 @@ def check_aws_scim_token(params: dict, section: list[dict]) -> CheckResult:
     remaining: list[float] = []
     for token in tokens:
         result, days = _check_token(token, now, levels)
+        if detail := token.get("detail"):
+            result = Result(state=result.state, summary=result.summary, details=f"{result.summary}\nAWS Health event: {detail}")
         yield result
         if days is not None:
             remaining.append(days)
