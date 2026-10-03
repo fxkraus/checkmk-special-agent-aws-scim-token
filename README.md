@@ -13,7 +13,7 @@ The special agent reports every open event; the check plugin turns them into a s
 
 - No open event → **OK** (no token expires within 90 days).
 - One result line per token, with WARN/CRIT based on the configured thresholds.
-- The expiry date is parsed from the event description. If no date can be found, the token is reported as **WARN** ("expires within 90 days").
+- The expiry date is parsed from the event description: the first date that follows "expires"/"expiry"/"expiration", otherwise the first date in the text. If no date can be found, the token is reported as **WARN** ("expires within 90 days").
 - AWS API errors (missing permissions, no support plan, no credentials) → **CRIT**.
 
 There is no public AWS API that lists SCIM access tokens directly, so AWS Health is the only data source.
