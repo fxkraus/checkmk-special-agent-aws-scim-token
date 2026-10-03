@@ -10,7 +10,7 @@ from cmk.agent_based.v2 import Metric, Result, Service, State
 from cmk_addons.plugins.aws_scim_token.agent_based import aws_scim_token as check
 
 NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
-PARAMS = {"warn_days": 30, "crit_days": 14}
+PARAMS = {"levels": ("fixed", (30, 14))}
 
 
 class _FrozenDateTime(datetime):
@@ -28,8 +28,8 @@ def _expiry(days: float) -> str:
     return (NOW + timedelta(days=days)).isoformat()
 
 
-def _run(section):
-    return list(check.check_aws_scim_token(PARAMS, section))
+def _run(section, params=PARAMS):
+    return list(check.check_aws_scim_token(params, section))
 
 
 def _states(results):
@@ -59,7 +59,7 @@ class TestCheck:
 
     @pytest.mark.parametrize(
         ("days", "state"),
-        [(60, State.OK), (30, State.WARN), (20, State.WARN), (14, State.CRIT), (5, State.CRIT), (-1, State.CRIT)],
+        [(60, State.OK), (30.01, State.OK), (30, State.WARN), (20, State.WARN), (14.01, State.WARN), (14, State.CRIT), (5, State.CRIT), (-1, State.CRIT)],
     )
     def test_thresholds(self, days, state):
         assert _states(_run([{"name": "t", "expiry": _expiry(days)}])) == [state]
@@ -68,10 +68,20 @@ class TestCheck:
         [result, _] = _run([{"name": "t", "expiry": _expiry(-1)}])
         assert "EXPIRED" in result.summary
 
+    def test_summary_names_levels_when_not_ok(self):
+        [result, _] = _run([{"name": "t", "expiry": _expiry(20)}])
+        assert "(warn/crit at 30/14 days or fewer)" in result.summary
+
+    def test_no_levels_is_always_ok_until_expired(self):
+        params = {"levels": ("no_levels", None)}
+        assert _states(_run([{"name": "t", "expiry": _expiry(1)}], params)) == [State.OK]
+        assert _states(_run([{"name": "t", "expiry": _expiry(-1)}], params)) == [State.CRIT]
+
     def test_metric_is_soonest_expiry(self):
         results = _run([{"name": "a", "expiry": _expiry(60)}, {"name": "b", "expiry": _expiry(20)}])
         [metric] = [r for r in results if isinstance(r, Metric)]
         assert metric.value == pytest.approx(20)
+        assert metric.levels == (30, 14)
         assert _states(results) == [State.OK, State.WARN]
 
     def test_duplicate_names_are_all_reported(self):
