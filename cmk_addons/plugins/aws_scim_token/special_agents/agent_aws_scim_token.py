@@ -58,6 +58,8 @@ CLOSED_EVENT_DAYS = 30  # report an expired token for this long after AWS closed
 # AWS renews the event daily until expiry; a closed event updated this close to its
 # expiry was tracked until the token expired rather than closed by rotation or deletion
 CLOSED_EVENT_EXPIRY_GRACE = timedelta(days=2)
+# A date without a time of day expires at its end, not at its start
+END_OF_DAY = timedelta(hours=23, minutes=59, seconds=59)
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -66,13 +68,15 @@ def _parse_dt(value: str) -> datetime | None:
             dt = datetime.fromisoformat(candidate)
         except ValueError:
             continue
+        if len(candidate) == 10:
+            dt += END_OF_DAY
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return None
 
 
 def _date(year: str, month: str, day: str) -> datetime | None:
     try:
-        return datetime(int(year), _MONTHS.index(month[:3].lower()) + 1, int(day), tzinfo=UTC)
+        return datetime(int(year), _MONTHS.index(month[:3].lower()) + 1, int(day), tzinfo=UTC) + END_OF_DAY
     except ValueError:
         return None
 
@@ -85,19 +89,21 @@ def _dates_in_text(text: str) -> list[tuple[int, datetime]]:
     return sorted((pos, dt) for pos, dt in found if dt)
 
 
-def _dt_from_text(text: str) -> datetime | None:
+def _dt_from_text(text: str, now: datetime) -> datetime | None:
     """Return the expiry date from free-form event description text.
 
     Prefers the first date shortly after an "expire(s|d)/expiry/expiration"
     keyword, so that other dates in the text (notification or creation date)
-    are skipped. Falls back to the first date anywhere in the text.
+    are skipped. Falls back to the first future date anywhere in the text; a
+    past date without that keyword is more likely the notification date than
+    the expiry, and would be reported as an expired token.
     """
     dates = _dates_in_text(text)
     for keyword in _EXPIRY_KEYWORD_RE.finditer(text):
         for pos, dt in dates:
             if keyword.end() <= pos <= keyword.end() + EXPIRY_DATE_WINDOW:
                 return dt
-    return dates[0][1] if dates else None
+    return next((dt for _, dt in dates if dt > now), None)
 
 
 def _redact(text: str) -> str:
@@ -212,7 +218,7 @@ def _describe_token_events(client: Any, event_type_codes: list[str]) -> list[dic
             if arn not in details:
                 continue
             description = details[arn].get("eventDescription", {}).get("latestDescription", "")
-            expiry = _dt_from_text(description)
+            expiry = _dt_from_text(description, now)
             name = names.get(arn, arn.rsplit("/", 1)[-1])
             # Renewed events repeat the same token and expiry
             if not _is_reportable(events_by_arn[arn], expiry, now) or (name, expiry) in reported:

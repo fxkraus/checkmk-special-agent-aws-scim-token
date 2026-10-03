@@ -19,7 +19,7 @@ The special agent reports every open event; the check plugin turns them into a s
 - Renewed events of the same token and expiry date are reported once.
 - One result line per token, with WARN/CRIT based on the configured thresholds. The long output shows the
   start of the AWS Health event description, to check the parsed expiry date against.
-- The expiry date is parsed from the event description: the first date that follows "expires"/"expiry"/"expiration", otherwise the first date in the text. If no date can be found, the token is reported as **WARN** ("expires within 90 days").
+- The expiry date is parsed from the event description: the first date that follows "expires"/"expiry"/"expiration", otherwise the first future date in the text (a past date without that keyword is more likely the notification date). A date without a time of day counts as its end (23:59:59 UTC). If no date can be found, the token is reported as **WARN** ("expires within 90 days").
 - AWS API errors (missing permissions, no support plan, no credentials) → **CRIT**. ARNs and account IDs in
   AWS error messages are replaced by `<arn>` / `<account>`, so they do not end up in service output and notifications.
 
@@ -166,7 +166,7 @@ Expected output:
 
 ```
 <<<aws_scim_token:sep(0)>>>
-{"name": "<affected entity>", "expiry": "2026-12-31T00:00:00+00:00", "source": "arn:aws:health:...", "detail": "..."}
+{"name": "<affected entity>", "expiry": "2026-12-31T23:59:59+00:00", "source": "arn:aws:health:...", "detail": "..."}
 ```
 
 No lines after the header means there is no open expiry notification.
@@ -176,11 +176,11 @@ No lines after the header means there is no open expiry notification.
 | State | Summary |
 |-------|---------|
 | OK | `No SCIM token expiry notifications (no token expires within 90 days)` |
-| OK | `<token>: expires in 45.2 days (2026-12-31 00:00 UTC) [arn:aws:health:…]` |
-| WARN | `<token>: expires in 22.1 days (2026-12-31 00:00 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
+| OK | `<token>: expires in 45.2 days (2026-12-31 23:59 UTC) [arn:aws:health:…]` |
+| WARN | `<token>: expires in 22.1 days (2026-12-31 23:59 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
 | WARN | `<token>: expires within 90 days, date not found in AWS Health event [arn:aws:health:…]` |
-| CRIT | `<token>: expires in 7.0 days (2026-12-31 00:00 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
-| CRIT | `<token>: EXPIRED on 2026-01-01 00:00 UTC [arn:aws:health:…]` |
+| CRIT | `<token>: expires in 7.0 days (2026-12-31 23:59 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
+| CRIT | `<token>: EXPIRED on 2026-01-01 23:59 UTC [arn:aws:health:…]` |
 | CRIT | `Error querying AWS: AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support` |
 
 ## Repository layout
