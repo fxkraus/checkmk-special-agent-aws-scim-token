@@ -154,6 +154,36 @@ class TestFetchTokenEvents:
         assert agent.fetch_token_events(session, ["X"]) == []
         assert [c.kwargs["region_name"] for c in session.client.call_args_list] == ["us-east-1", "us-east-2"]
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ReadTimeoutError(endpoint_url="https://health.us-east-1.amazonaws.com"),
+            ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "down"}, "ResponseMetadata": {"HTTPStatusCode": 503}}, "DescribeEvents"),
+            ClientError({"Error": {"Code": "InternalFailure", "Message": "oops"}, "ResponseMetadata": {"HTTPStatusCode": 500}}, "DescribeEvents"),
+            ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}, "ResponseMetadata": {"HTTPStatusCode": 400}}, "DescribeEvents"),
+        ],
+    )
+    def test_fails_over_on_endpoint_failure(self, error):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = [error, [{"events": []}], [{"events": []}]]
+        assert agent.fetch_token_events(session, ["X"]) == []
+        assert [c.kwargs["region_name"] for c in session.client.call_args_list] == ["us-east-1", "us-east-2"]
+
+    @pytest.mark.parametrize("code", ["AccessDenied", "SubscriptionRequiredException", "ValidationException"])
+    def test_does_not_fail_over_on_request_errors(self, code):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = ClientError({"Error": {"Code": code, "Message": "no"}, "ResponseMetadata": {"HTTPStatusCode": 400}}, "DescribeEvents")
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert "error" in record
+        assert [c.kwargs["region_name"] for c in session.client.call_args_list] == ["us-east-1"]
+
+    def test_server_error_on_all_endpoints_is_reported(self):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "down"}, "ResponseMetadata": {"HTTPStatusCode": 503}}, "DescribeEvents")
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert "ServiceUnavailable" in record["error"]
+        assert session.client.call_count == 2
+
     def test_connection_error_on_all_endpoints_is_reported(self):
         session, _, paginator = _health_client([])
         paginator.paginate.side_effect = EndpointConnectionError(endpoint_url="https://health.amazonaws.com")

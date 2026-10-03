@@ -97,6 +97,8 @@ AWS Health data changes at most daily, so a longer check interval for this host
 (e.g. **Setup → Services → Service monitoring rules → Normal check interval for
 service checks**, 30–60 min for `Check_MK`) saves API calls. Every AWS call
 times out after 5 s (connect) / 15 s (read) and is retried up to 3 times.
+If the primary AWS Health endpoint is unreachable, times out, returns a server error or
+throttles, the agent fails over to the partition's secondary endpoint (`us-east-2`).
 
 ### 2. Set check parameters (optional)
 
