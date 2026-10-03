@@ -218,6 +218,33 @@ class TestBuildSession:
         assert "ExternalId" not in sts.assume_role.call_args.kwargs
 
 
+@pytest.fixture
+def password_store_file(tmp_path, monkeypatch):
+    """A real password store file written with the Checkmk API, keyed by a temporary secret."""
+    from cmk.utils import password_store, paths
+
+    secret_file = tmp_path / "password_store.secret"
+    monkeypatch.setattr(paths, "password_store_secret_file", secret_file)
+    monkeypatch.setenv("PASSWORD_STORE_SECRET_FILE", str(secret_file))  # read by the Checkmk 2.5 API
+    store = tmp_path / "stored_passwords"
+    password_store.save({"aws_secret": "s3cret"}, store)
+    return store
+
+
+class TestLookupSecret:
+    def test_resolves_reference_from_real_store(self, password_store_file):
+        assert agent._lookup_secret(f"aws_secret:{password_store_file}") == "s3cret"
+
+    def test_unknown_id_raises_value_error(self, password_store_file):
+        with pytest.raises(ValueError, match="unknown"):
+            agent._lookup_secret(f"unknown:{password_store_file}")
+
+    def test_unresolvable_reference_fails_session_setup(self, password_store_file, capsys):
+        argv = ["--access-key-id", "AKIA", "--secret-access-key-reference", f"unknown:{password_store_file}"]
+        assert agent.main(argv) == 1
+        assert "Failed to create AWS session" in capsys.readouterr().err
+
+
 class TestMain:
     def test_emits_header_even_without_events(self, capsys):
         with patch.object(agent, "build_session"), patch.object(agent, "fetch_token_events", return_value=[]):
