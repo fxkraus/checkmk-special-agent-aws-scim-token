@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
+from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError, ReadTimeoutError
 
 from cmk_addons.plugins.aws_scim_token.special_agents import agent_aws_scim_token as agent
 
@@ -227,6 +227,19 @@ class TestFetchTokenEvents:
         paginator.paginate.side_effect = ClientError({"Error": {"Code": "SubscriptionRequiredException", "Message": "no"}}, "DescribeEvents")
         [record] = agent.fetch_token_events(session, ["X"])
         assert "Business" in record["error"]
+
+    def test_access_denied_is_reported(self):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = ClientError({"Error": {"Code": "AccessDenied", "Message": "not authorized"}}, "DescribeEvents")
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert "AccessDenied" in record["error"]
+        assert "DescribeEvents" in record["error"]
+
+    def test_read_timeout_is_reported(self):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = ReadTimeoutError(endpoint_url="https://health.us-east-1.amazonaws.com")
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert "Read timeout" in record["error"]
 
     def test_botocore_error_is_reported(self):
         session, _, paginator = _health_client([])

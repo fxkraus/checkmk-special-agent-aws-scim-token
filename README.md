@@ -17,7 +17,8 @@ The special agent reports every open event; the check plugin turns them into a s
   expired token stays **CRIT** for 30 days instead of turning OK once AWS stops renewing the event.
   Closed events of rotated or deleted tokens are ignored.
 - Renewed events of the same token and expiry date are reported once.
-- One result line per token, with WARN/CRIT based on the configured thresholds.
+- One result line per token, with WARN/CRIT based on the configured thresholds. The long output shows the
+  start of the AWS Health event description, to check the parsed expiry date against.
 - The expiry date is parsed from the event description: the first date that follows "expires"/"expiry"/"expiration", otherwise the first date in the text. If no date can be found, the token is reported as **WARN** ("expires within 90 days").
 - AWS API errors (missing permissions, no support plan, no credentials) → **CRIT**. ARNs and account IDs in
   AWS error messages are replaced by `<arn>` / `<account>`, so they do not end up in service output and notifications.
