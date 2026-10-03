@@ -12,6 +12,13 @@ from botocore.exceptions import ClientError, EndpointConnectionError, NoCredenti
 
 from cmk_addons.plugins.aws_scim_token.special_agents import agent_aws_scim_token as agent
 
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _end_of_day(year: int, month: int, day: int) -> datetime:
+    return datetime(year, month, day, 23, 59, 59, tzinfo=UTC)
+
+
 ARN = "arn:aws:health:us-east-1::event/IAMIDENTITYCENTER/AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFICATION/abc"
 
 
@@ -20,7 +27,7 @@ class TestDateHelpers:
         assert agent._parse_dt("2026-12-31T23:59:59Z") == datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
 
     def test_parse_dt_naive_gets_utc(self):
-        assert agent._parse_dt("2026-01-15") == datetime(2026, 1, 15, tzinfo=UTC)
+        assert agent._parse_dt("2026-01-15") == _end_of_day(2026, 1, 15)
 
     def test_parse_dt_invalid(self):
         assert agent._parse_dt("not a date") is None
@@ -32,7 +39,7 @@ class TestDateHelpers:
             ("2026-09-01T12:00:00.000Z", datetime(2026, 9, 1, 12, tzinfo=UTC)),
             ("2026-09-01T12:00:00.123+02:00", datetime(2026, 9, 1, 10, 0, 0, 123000, tzinfo=UTC)),
             ("2026-09-01 12:00:00+0200", datetime(2026, 9, 1, 10, tzinfo=UTC)),
-            ("2026-09-01T25:00:00", datetime(2026, 9, 1, tzinfo=UTC)),
+            ("2026-09-01T25:00:00", _end_of_day(2026, 9, 1)),
         ],
     )
     def test_parse_dt_iso_variants(self, value, expected):
@@ -43,25 +50,30 @@ class TestDateHelpers:
         [
             ("expires on 2026-06-30T12:00:00Z, please rotate", datetime(2026, 6, 30, 12, tzinfo=UTC)),
             ("expires 2026-09-01T12:00:00.000Z", datetime(2026, 9, 1, 12, tzinfo=UTC)),
-            ("will expire on June 30, 2026", datetime(2026, 6, 30, tzinfo=UTC)),
-            ("will expire on Jun 30 2026", datetime(2026, 6, 30, tzinfo=UTC)),
-            ("will expire on 30 June 2026", datetime(2026, 6, 30, tzinfo=UTC)),
-            ("will expire on Tue, 30 Jun 2026", datetime(2026, 6, 30, tzinfo=UTC)),
-            ("See the Summary 5, 2026 report. Token expires on December 1, 2026", datetime(2026, 12, 1, tzinfo=UTC)),
-            ("Notice sent 2026-06-01. Your token expires on 2026-09-01.", datetime(2026, 9, 1, tzinfo=UTC)),
-            ("Token created on March 3, 2025 expires on June 1, 2026", datetime(2026, 6, 1, tzinfo=UTC)),
-            ("Expiration date: 1 June 2026 (notified 2026-03-03)", datetime(2026, 6, 1, tzinfo=UTC)),
-            ("Rotate the token before 2026-09-01.", datetime(2026, 9, 1, tzinfo=UTC)),
+            ("will expire on June 30, 2026", _end_of_day(2026, 6, 30)),
+            ("will expire on Jun 30 2026", _end_of_day(2026, 6, 30)),
+            ("will expire on 30 June 2026", _end_of_day(2026, 6, 30)),
+            ("will expire on Tue, 30 Jun 2026", _end_of_day(2026, 6, 30)),
+            ("See the Summary 5, 2026 report. Token expires on December 1, 2026", _end_of_day(2026, 12, 1)),
+            ("Notice sent 2026-06-01. Your token expires on 2026-09-01.", _end_of_day(2026, 9, 1)),
+            ("Token created on March 3, 2025 expires on June 1, 2026", _end_of_day(2026, 6, 1)),
+            ("Expiration date: 1 June 2026 (notified 2026-03-03)", _end_of_day(2026, 6, 1)),
+            ("Rotate the token before 2026-09-01.", _end_of_day(2026, 9, 1)),
+            ("Your token expired on 2025-12-01.", _end_of_day(2025, 12, 1)),
+            ("Notice sent 2025-12-01. Rotate the token before 2026-03-01.", _end_of_day(2026, 3, 1)),
         ],
     )
     def test_dt_from_text(self, text, expected):
-        assert agent._dt_from_text(text) == expected
+        assert agent._dt_from_text(text, NOW) == expected
+
+    def test_dt_from_text_ignores_past_date_without_expiry_keyword(self):
+        assert agent._dt_from_text("Notice sent 2025-12-01. Please rotate the token.", NOW) is None
 
     def test_dt_from_text_ignores_month_names_inside_words(self):
-        assert agent._dt_from_text("Summary 5, 2026") is None
+        assert agent._dt_from_text("Summary 5, 2026", NOW) is None
 
     def test_dt_from_text_no_match(self):
-        assert agent._dt_from_text("no date here") is None
+        assert agent._dt_from_text("no date here", NOW) is None
 
     def test_dt_to_str_converts_to_utc(self):
         from datetime import timedelta, timezone
@@ -154,7 +166,7 @@ class TestFetchTokenEvents:
         session, _, _ = _health_client([event], details=[detail], entities=[{"eventArn": ARN, "entityValue": "tok-1"}])
 
         [record] = agent.fetch_token_events(session, ["X"])
-        assert record == {"name": "tok-1", "expiry": "2026-09-01T00:00:00+00:00", "source": ARN, "detail": "Your SCIM token expires on 2026-09-01."}
+        assert record == {"name": "tok-1", "expiry": "2026-09-01T23:59:59+00:00", "source": ARN, "detail": "Your SCIM token expires on 2026-09-01."}
 
     def test_no_date_in_description_yields_null_expiry(self):
         session, _, _ = _health_client([{"arn": ARN}], details=[_detail(ARN)])
@@ -197,7 +209,7 @@ class TestFetchTokenEvents:
         expiry = datetime(2026, 1, 10, tzinfo=UTC)
         session, _, _ = self._closed_event(expiry, last_updated=expiry - timedelta(days=1))
         [record] = agent.fetch_token_events(session, ["X"])
-        assert record["expiry"] == "2026-01-10T00:00:00+00:00"
+        assert record["expiry"] == "2026-01-10T23:59:59+00:00"
 
     def test_closed_event_of_unexpired_token_is_skipped(self):
         expiry = datetime.now(UTC) + timedelta(days=40)
