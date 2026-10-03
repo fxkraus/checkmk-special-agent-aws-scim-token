@@ -92,8 +92,13 @@ In Checkmk: **Setup → Services → Service monitoring rules → AWS SCIM Token
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| **Warning threshold** | 30 days | WARN when N days or fewer remain |
-| **Critical threshold** | 14 days | CRIT when N days or fewer remain |
+| **Lower levels for the remaining token lifetime** | Fixed: warn 30 / crit 14 days | WARN/CRIT when N days or fewer remain. "No levels" turns the service CRIT only once a token has expired. |
+
+The warning level must not be lower than the critical level; negative values are rejected.
+Rules created with older versions (separate warning/critical fields) are migrated automatically.
+
+The service records the metric `aws_scim_token_days_remaining` (soonest expiring token) with the
+levels as threshold lines in the graph, plus a perfometer (0–90 days).
 
 ## Assume Role
 
@@ -160,9 +165,9 @@ No lines after the header means there is no open expiry notification.
 |-------|---------|
 | OK | `No SCIM token expiry notifications (no token expires within 90 days)` |
 | OK | `<token>: expires in 45.2 days (2026-12-31 00:00 UTC) [arn:aws:health:…]` |
-| WARN | `<token>: expires in 22.1 days (2026-12-31 00:00 UTC) [arn:aws:health:…]` |
+| WARN | `<token>: expires in 22.1 days (2026-12-31 00:00 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
 | WARN | `<token>: expires within 90 days, date not found in AWS Health event [arn:aws:health:…]` |
-| CRIT | `<token>: expires in 7.0 days (2026-12-31 00:00 UTC) [arn:aws:health:…]` |
+| CRIT | `<token>: expires in 7.0 days (2026-12-31 00:00 UTC) (warn/crit at 30/14 days or fewer) [arn:aws:health:…]` |
 | CRIT | `<token>: EXPIRED on 2026-01-01 00:00 UTC [arn:aws:health:…]` |
 | CRIT | `Error querying AWS: AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support` |
 
@@ -175,6 +180,7 @@ checkmk-special-agent-aws-scim-token/
 │   ├── libexec/agent_aws_scim_token            # Special agent executable (thin wrapper)
 │   ├── special_agents/agent_aws_scim_token.py  # Special agent implementation
 │   ├── server_side_calls/special_agent.py      # Rule parameters → agent command line
+│   ├── graphing/aws_scim_token.py              # Metric and perfometer definitions
 │   └── rulesets/
 │       ├── special_agent.py                    # Setup: agent configuration
 │       └── check_parameters.py                 # Setup: warn/crit thresholds

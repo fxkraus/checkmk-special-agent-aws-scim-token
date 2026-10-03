@@ -16,7 +16,7 @@ mapfile -t TEST_DEPS <<< "${TEST_DEPS_LINES}"
 "${PYTHON}" -m pip install --quiet --disable-pip-version-check --target "${DEPS_DIR}" "${TEST_DEPS[@]}"
 
 # Fail loudly instead of letting the test modules skip themselves
-"${PYTHON}" -c "import boto3, pydantic, cmk.agent_based.v2, cmk.rulesets.v1, cmk.server_side_calls.v1, cmk.utils.password_store"
+"${PYTHON}" -c "import boto3, pydantic, cmk.agent_based.v2, cmk.rulesets.v1, cmk.server_side_calls.v1, cmk.graphing.v1, cmk.utils.password_store"
 
 cd "${REPO_DIR}"
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${DEPS_DIR}:${REPO_DIR}" \

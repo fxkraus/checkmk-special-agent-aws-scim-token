@@ -55,7 +55,7 @@ def discover_aws_scim_token(section: list[dict]) -> DiscoveryResult:
     yield Service()
 
 
-def _check_token(token: dict, now: datetime, warn_days: int, crit_days: int) -> tuple[Result, float | None]:
+def _check_token(token: dict, now: datetime, levels: tuple[float, float] | None) -> tuple[Result, float | None]:
     name = token.get("name", "unknown")
     source = f" [{token['source']}]" if token.get("source") else ""
     expiry_str = token.get("expiry")
@@ -70,18 +70,23 @@ def _check_token(token: dict, now: datetime, warn_days: int, crit_days: int) -> 
     expiry_fmt = expiry_dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
     if days <= 0:
         return Result(state=State.CRIT, summary=f"{name}: EXPIRED on {expiry_fmt}{source}"), days
-    if days <= crit_days:
-        state = State.CRIT
-    elif days <= warn_days:
-        state = State.WARN
-    else:
-        state = State.OK
-    return Result(state=state, summary=f"{name}: expires in {days:.1f} days ({expiry_fmt}){source}"), days
+    state = State.OK
+    levels_text = ""
+    if levels is not None:
+        warn_days, crit_days = levels
+        if days <= crit_days:
+            state = State.CRIT
+        elif days <= warn_days:
+            state = State.WARN
+        if state is not State.OK:
+            levels_text = f" (warn/crit at {warn_days:g}/{crit_days:g} days or fewer)"
+    return Result(state=state, summary=f"{name}: expires in {days:.1f} days ({expiry_fmt}){levels_text}{source}"), days
 
 
 def check_aws_scim_token(params: dict, section: list[dict]) -> CheckResult:
-    warn_days: int = params["warn_days"]
-    crit_days: int = params["crit_days"]
+    levels_type, levels = params["levels"]
+    if levels_type != "fixed":
+        levels = None
     now = datetime.now(UTC)
 
     errors = [r["error"] for r in section if "error" in r]
@@ -92,13 +97,14 @@ def check_aws_scim_token(params: dict, section: list[dict]) -> CheckResult:
 
     remaining: list[float] = []
     for token in tokens:
-        result, days = _check_token(token, now, warn_days, crit_days)
+        result, days = _check_token(token, now, levels)
         yield result
         if days is not None:
             remaining.append(days)
 
     if remaining:
-        yield Metric("aws_scim_token_days_remaining", min(remaining), boundaries=(0.0, None))
+        # Lower levels: Checkmk draws them as threshold lines in the graph
+        yield Metric("aws_scim_token_days_remaining", min(remaining), levels=levels, boundaries=(0.0, None))
 
     if not errors and not tokens:
         yield Result(state=State.OK, summary="No SCIM token expiry notifications (no token expires within 90 days)")
@@ -110,8 +116,7 @@ check_plugin_aws_scim_token = CheckPlugin(
     discovery_function=discover_aws_scim_token,
     check_function=check_aws_scim_token,
     check_default_parameters={
-        "warn_days": 30,
-        "crit_days": 14,
+        "levels": ("fixed", (30, 14)),
     },
     check_ruleset_name="aws_scim_token",
 )
