@@ -66,3 +66,36 @@ def test_negative_days_are_rejected():
     [validate] = _levels_form().form_spec_template.custom_validate or ()
     with pytest.raises(validators.ValidationError):
         validate(-1)
+
+
+def _validate(form_spec, value) -> None:
+    for validate in form_spec.custom_validate or ():
+        validate(value)
+
+
+@pytest.mark.parametrize("region", ["us-east-1", "eu-central-1", "us-gov-west-1", "cn-northwest-1", "eusc-de-east-1"])
+def test_valid_regions_are_accepted(region):
+    _validate(rule_spec_aws_scim_token.parameter_form().elements["region"].parameter_form, region)
+
+
+@pytest.mark.parametrize("region", ["", "eu-central", "Frankfurt", "eu-central-1 ", "us_east_1"])
+def test_invalid_regions_are_rejected(region):
+    with pytest.raises(validators.ValidationError):
+        _validate(rule_spec_aws_scim_token.parameter_form().elements["region"].parameter_form, region)
+
+
+@pytest.mark.parametrize(("name", "valid"), [("checkmk-scim-monitor", True), ("a+b=c,d.e@f_g", True), ("x", False), ("has space", False), ("x" * 65, False)])
+def test_session_name_follows_sts_constraints(name, valid):
+    session_name = _sub_form(rule_spec_aws_scim_token.parameter_form(), "assume_role").elements["session_name"].parameter_form
+    if valid:
+        _validate(session_name, name)
+    else:
+        with pytest.raises(validators.ValidationError):
+            _validate(session_name, name)
+
+
+def test_at_most_ten_event_type_codes():
+    codes = rule_spec_aws_scim_token.parameter_form().elements["event_type_codes"].parameter_form
+    _validate(codes, ["X"] * 10)
+    with pytest.raises(validators.ValidationError):
+        _validate(codes, ["X"] * 11)

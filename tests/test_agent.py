@@ -123,6 +123,14 @@ class TestFetchTokenEvents:
     def test_health_region_follows_partition(self, region, expected):
         assert agent._health_regions(boto3.Session(region_name=region)) == expected
 
+    def test_unknown_region_is_reported(self):
+        [record] = agent.fetch_token_events(boto3.Session(region_name="eu-central"), ["X"])
+        assert record == {"error": "Unknown AWS region 'eu-central'"}
+
+    def test_partition_without_health_endpoint_is_reported(self):
+        [record] = agent.fetch_token_events(boto3.Session(region_name="us-iso-east-1"), ["X"])
+        assert "not supported in partition 'aws-iso'" in record["error"]
+
     def test_fails_over_to_secondary_endpoint(self):
         session, _, paginator = _health_client([])
         paginator.paginate.side_effect = [EndpointConnectionError(endpoint_url="https://health.us-east-1.amazonaws.com"), [{"events": []}]]

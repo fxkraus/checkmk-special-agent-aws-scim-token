@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, UnknownRegionError
 from botocore.exceptions import ConnectionError as BotoConnectionError
 
 if TYPE_CHECKING:
@@ -139,8 +139,18 @@ def build_session(args: argparse.Namespace) -> boto3.Session:
 
 
 def _health_regions(session: boto3.Session) -> tuple[str, ...]:
-    partition = session.get_partition_for_region(session.region_name)
-    return HEALTH_REGIONS.get(partition, HEALTH_REGIONS["aws"])
+    """Return the AWS Health endpoints of the session region's partition.
+
+    Raises:
+        ValueError: If the region is unknown or AWS Health is not available in its partition.
+    """
+    try:
+        partition = session.get_partition_for_region(session.region_name)
+    except UnknownRegionError as exc:
+        raise ValueError(f"Unknown AWS region {session.region_name!r}") from exc
+    if partition not in HEALTH_REGIONS:
+        raise ValueError(f"AWS Health is not supported in partition {partition!r} (region {session.region_name!r})")
+    return HEALTH_REGIONS[partition]
 
 
 def _token_names(client: Any, arns: list[str]) -> dict[str, str]:
@@ -191,15 +201,17 @@ def fetch_token_events(session: boto3.Session, event_type_codes: list[str]) -> l
 
     Fails over to the next Health endpoint of the partition if one cannot be reached.
     """
-    regions = _health_regions(session)
+    try:
+        regions = _health_regions(session)
+    except ValueError as exc:
+        return [{"error": str(exc)}]
     for region in regions:
         client = session.client("health", region_name=region, config=CLIENT_CONFIG)
         try:
             return _describe_token_events(client, event_type_codes)
         except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") == "SubscriptionRequiredException":
-                return [{"error": "AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support"}]
-            return [{"error": str(exc)}]
+            no_subscription = exc.response.get("Error", {}).get("Code") == "SubscriptionRequiredException"
+            return [{"error": "AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support" if no_subscription else str(exc)}]
         except BotoConnectionError as exc:
             if region == regions[-1]:
                 return [{"error": str(exc)}]
