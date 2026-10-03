@@ -267,6 +267,9 @@ Supply-chain hardening:
 - The `images` job resolves the floating `checkmk/*:2.x.0-latest` tags to
   digests once per run; tests, MKP build and release all use these digests
   (printed as `Image: …@sha256:…` in the logs).
+- The pre-commit hook repos are pinned to commit SHAs (`# frozen: vX.Y.Z`
+  names the release) and `make secrets` runs the gitleaks image by digest,
+  so moved upstream tags cannot change the code that runs on commit.
 - The test dependencies are installed with `pip --require-hashes` from
   `uv export` of `uv.lock`, including all transitive packages.
 - No checkout keeps the `GITHUB_TOKEN` in `.git/config`, and only the final
