@@ -12,8 +12,10 @@ on:
 permissions:
   contents: read
 
-# One run per ref at a time; outdated pull request runs are cancelled. On
-# main, runs queue, so releases never race for the same version.
+# One run per ref at a time, so releases never race for the same version.
+# Outdated pull request runs are cancelled. On main, a running run finishes,
+# but GitHub keeps only the newest pending run and cancels older pending ones:
+# their commits get no CI run of their own and ship with the next release.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
