@@ -79,12 +79,12 @@ Create a rule for the host that represents the AWS account.
 
 | Field | Description |
 |-------|-------------|
-| **AWS Region** | Region for STS calls. Its partition selects the AWS Health endpoint: `us-east-1` (failover `us-east-2`), `cn-northwest-1` for China, `us-gov-west-1` for GovCloud |
+| **AWS Region** | Region for STS calls. Its partition selects the AWS Health endpoint: `us-east-1` (failover `us-east-2`), `cn-northwest-1` for China, `us-gov-west-1` for GovCloud. Other partitions (e.g. ISO) have no AWS Health endpoint and are reported as an error |
 | **Static access key** | Access Key ID + Secret Access Key. Leave unset to use the instance profile or environment. The secret is passed to the agent as a password store reference, never in plain text on the command line. |
 | **Assume Role → Role ARN** | IAM role to assume before querying AWS (cross-account or least-privilege) |
 | **Assume Role → External ID** | Required if the role's trust policy has an `sts:ExternalId` condition |
-| **Assume Role → Session Name** | STS session name (default: `checkmk-scim-monitor`) |
-| **Override AWS Health event type codes** | Only needed if AWS renames the event (default: `AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFICATION`) |
+| **Assume Role → Session Name** | STS session name, 2–64 characters of `A-Za-z0-9_+=,.@-` (default: `checkmk-scim-monitor`) |
+| **Override AWS Health event type codes** | Only needed if AWS renames the event (default: `AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFICATION`); at most 10 codes |
 
 AWS Health data changes at most daily, so a longer check interval for this host
 (e.g. **Setup → Services → Service monitoring rules → Normal check interval for
