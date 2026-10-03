@@ -25,17 +25,39 @@ class TestDateHelpers:
         assert agent._parse_dt("not a date") is None
 
     @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("2026-09-01T12:00:00", datetime(2026, 9, 1, 12, tzinfo=UTC)),
+            ("2026-09-01T12:00:00.000Z", datetime(2026, 9, 1, 12, tzinfo=UTC)),
+            ("2026-09-01T12:00:00.123+02:00", datetime(2026, 9, 1, 10, 0, 0, 123000, tzinfo=UTC)),
+            ("2026-09-01 12:00:00+0200", datetime(2026, 9, 1, 10, tzinfo=UTC)),
+            ("2026-09-01T25:00:00", datetime(2026, 9, 1, tzinfo=UTC)),
+        ],
+    )
+    def test_parse_dt_iso_variants(self, value, expected):
+        assert agent._parse_dt(value) == expected
+
+    @pytest.mark.parametrize(
         ("text", "expected"),
         [
             ("expires on 2026-06-30T12:00:00Z, please rotate", datetime(2026, 6, 30, 12, tzinfo=UTC)),
+            ("expires 2026-09-01T12:00:00.000Z", datetime(2026, 9, 1, 12, tzinfo=UTC)),
             ("will expire on June 30, 2026", datetime(2026, 6, 30, tzinfo=UTC)),
             ("will expire on Jun 30 2026", datetime(2026, 6, 30, tzinfo=UTC)),
             ("will expire on 30 June 2026", datetime(2026, 6, 30, tzinfo=UTC)),
             ("will expire on Tue, 30 Jun 2026", datetime(2026, 6, 30, tzinfo=UTC)),
+            ("See the Summary 5, 2026 report. Token expires on December 1, 2026", datetime(2026, 12, 1, tzinfo=UTC)),
+            ("Notice sent 2026-06-01. Your token expires on 2026-09-01.", datetime(2026, 9, 1, tzinfo=UTC)),
+            ("Token created on March 3, 2025 expires on June 1, 2026", datetime(2026, 6, 1, tzinfo=UTC)),
+            ("Expiration date: 1 June 2026 (notified 2026-03-03)", datetime(2026, 6, 1, tzinfo=UTC)),
+            ("Rotate the token before 2026-09-01.", datetime(2026, 9, 1, tzinfo=UTC)),
         ],
     )
     def test_dt_from_text(self, text, expected):
         assert agent._dt_from_text(text) == expected
+
+    def test_dt_from_text_ignores_month_names_inside_words(self):
+        assert agent._dt_from_text("Summary 5, 2026") is None
 
     def test_dt_from_text_no_match(self):
         assert agent._dt_from_text("no date here") is None

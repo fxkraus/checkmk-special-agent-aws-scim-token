@@ -32,24 +32,19 @@ DEFAULT_EVENT_TYPE_CODE = "AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFI
 HEALTH_REGION = "us-east-1"
 DETAILS_BATCH_SIZE = 10  # DescribeEventDetails accepts at most 10 ARNs
 
-_ISO_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?)?)\b")
+_ISO_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?)\b")
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-_MONTH = r"(" + "|".join(_MONTHS) + r")[a-z]*\.?"
+_MONTH = r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?"
 _MONTH_DAY_YEAR_RE = re.compile(_MONTH + r"\s+(\d{1,2}),?\s+(\d{4})\b", re.IGNORECASE)
 _DAY_MONTH_YEAR_RE = re.compile(r"\b(\d{1,2})\s+" + _MONTH + r",?\s+(\d{4})\b", re.IGNORECASE)
-_PARSE_FMTS = (
-    "%Y-%m-%dT%H:%M:%S%z",
-    "%Y-%m-%dT%H:%M:%SZ",
-    "%Y-%m-%d %H:%M:%S%z",
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d",
-)
+_EXPIRY_KEYWORD_RE = re.compile(r"\bexpir\w*", re.IGNORECASE)
+EXPIRY_DATE_WINDOW = 80  # max. characters between "expires" and the date it refers to
 
 
 def _parse_dt(value: str) -> datetime | None:
-    for fmt in _PARSE_FMTS:
+    for candidate in (value, value[:10]):
         try:
-            dt = datetime.strptime(value, fmt)
+            dt = datetime.fromisoformat(candidate)
         except ValueError:
             continue
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
@@ -63,15 +58,27 @@ def _date(year: str, month: str, day: str) -> datetime | None:
         return None
 
 
+def _dates_in_text(text: str) -> list[tuple[int, datetime]]:
+    """Return every recognisable date in the text with its position, in text order."""
+    found = [(m.start(), _parse_dt(m.group(1))) for m in _ISO_RE.finditer(text)]
+    found += [(m.start(), _date(m.group(3), m.group(1), m.group(2))) for m in _MONTH_DAY_YEAR_RE.finditer(text)]
+    found += [(m.start(), _date(m.group(3), m.group(2), m.group(1))) for m in _DAY_MONTH_YEAR_RE.finditer(text)]
+    return sorted((pos, dt) for pos, dt in found if dt)
+
+
 def _dt_from_text(text: str) -> datetime | None:
-    """Return the first recognisable date in free-form event description text."""
-    if (m := _ISO_RE.search(text)) and (dt := _parse_dt(m.group(1))):
-        return dt
-    if m := _MONTH_DAY_YEAR_RE.search(text):
-        return _date(m.group(3), m.group(1), m.group(2))
-    if m := _DAY_MONTH_YEAR_RE.search(text):
-        return _date(m.group(3), m.group(2), m.group(1))
-    return None
+    """Return the expiry date from free-form event description text.
+
+    Prefers the first date shortly after an "expire(s|d)/expiry/expiration"
+    keyword, so that other dates in the text (notification or creation date)
+    are skipped. Falls back to the first date anywhere in the text.
+    """
+    dates = _dates_in_text(text)
+    for keyword in _EXPIRY_KEYWORD_RE.finditer(text):
+        for pos, dt in dates:
+            if keyword.end() <= pos <= keyword.end() + EXPIRY_DATE_WINDOW:
+                return dt
+    return dates[0][1] if dates else None
 
 
 def _dt_to_str(dt: datetime) -> str:
