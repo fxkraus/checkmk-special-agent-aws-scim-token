@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError, UnknownRegionError
+from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError, UnknownRegionError
 from botocore.exceptions import ConnectionError as BotoConnectionError
 
 if TYPE_CHECKING:
@@ -43,6 +43,7 @@ HEALTH_REGIONS = {
 }
 BATCH_SIZE = 10  # DescribeEventDetails and DescribeAffectedEntities accept at most 10 event ARNs
 CLIENT_CONFIG = Config(connect_timeout=5, read_timeout=15, retries={"mode": "standard", "max_attempts": 3})
+THROTTLING_ERROR_CODES = frozenset({"Throttling", "ThrottlingException", "TooManyRequestsException"})
 
 _ISO_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?)\b")
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
@@ -235,10 +236,25 @@ def _describe_token_events(client: Any, event_type_codes: list[str]) -> list[dic
     return results
 
 
+def _is_endpoint_failure(exc: ClientError | BotoCoreError) -> bool:
+    """Return whether another Health endpoint may succeed where this one failed."""
+    if isinstance(exc, ClientError):
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+        return status >= 500 or exc.response.get("Error", {}).get("Code") in THROTTLING_ERROR_CODES
+    return isinstance(exc, BotoConnectionError | ReadTimeoutError)
+
+
+def _error_record(exc: ClientError | BotoCoreError) -> dict[str, str]:
+    if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") == "SubscriptionRequiredException":
+        return {"error": "AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support"}
+    return {"error": str(exc)}
+
+
 def fetch_token_events(session: boto3.Session, event_type_codes: list[str]) -> list[dict[str, Any]]:
     """Return one record per SCIM token with an expiry event, or an error record.
 
-    Fails over to the next Health endpoint of the partition if one cannot be reached.
+    Fails over to the next Health endpoint of the partition if one is unreachable,
+    times out, returns a server error or throttles (after botocore's own retries).
     """
     try:
         regions = _health_regions(session)
@@ -248,14 +264,9 @@ def fetch_token_events(session: boto3.Session, event_type_codes: list[str]) -> l
         client = session.client("health", region_name=region, config=CLIENT_CONFIG)
         try:
             return _describe_token_events(client, event_type_codes)
-        except ClientError as exc:
-            no_subscription = exc.response.get("Error", {}).get("Code") == "SubscriptionRequiredException"
-            return [{"error": "AWS Health API requires Business, Enterprise On-Ramp, or Enterprise Support" if no_subscription else str(exc)}]
-        except BotoConnectionError as exc:
-            if region == regions[-1]:
-                return [{"error": str(exc)}]
-        except BotoCoreError as exc:
-            return [{"error": str(exc)}]
+        except (ClientError, BotoCoreError) as exc:
+            if region == regions[-1] or not _is_endpoint_failure(exc):
+                return [_error_record(exc)]
     return []
 
 
