@@ -12,6 +12,11 @@ The special agent reports every open event; the check plugin turns them into a s
 `AWS SCIM Token` service:
 
 - No open event → **OK** (no token expires within 90 days).
+- AWS renews the event until the token expires. Recently closed events (last updated within 30 days)
+  are reported as well if AWS tracked the token until its expiry date and that date has passed, so an
+  expired token stays **CRIT** for 30 days instead of turning OK once AWS stops renewing the event.
+  Closed events of rotated or deleted tokens are ignored.
+- Renewed events of the same token and expiry date are reported once.
 - One result line per token, with WARN/CRIT based on the configured thresholds.
 - The expiry date is parsed from the event description: the first date that follows "expires"/"expiry"/"expiration", otherwise the first date in the text. If no date can be found, the token is reported as **WARN** ("expires within 90 days").
 - AWS API errors (missing permissions, no support plan, no credentials) → **CRIT**.

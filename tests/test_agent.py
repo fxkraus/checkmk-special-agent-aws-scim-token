@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import boto3
@@ -82,10 +82,10 @@ class TestParseArguments:
             agent.parse_arguments(["--access-key-id", "AKIA"])
 
 
-def _health_client(events, details=None, failed=None, entities=None):
+def _health_client(events, details=None, failed=None, entities=None, closed=None):
     client = MagicMock()
     paginators = {"describe_events": MagicMock(), "describe_affected_entities": MagicMock()}
-    paginators["describe_events"].paginate.return_value = [{"events": events}]
+    paginators["describe_events"].paginate.side_effect = lambda filter: [{"events": (closed or []) if filter["eventStatusCodes"] == ["closed"] else events}]
     paginators["describe_affected_entities"].paginate.return_value = [{"entities": entities or []}]
     client.get_paginator.side_effect = paginators.__getitem__
     client.describe_event_details.return_value = {"successfulSet": details or [], "failedSet": failed or []}
@@ -109,7 +109,12 @@ class TestFetchTokenEvents:
         session, _, paginator = _health_client([])
         agent.fetch_token_events(session, ["X"])
         session.client.assert_called_once_with("health", region_name="us-east-1", config=agent.CLIENT_CONFIG)
-        assert paginator.paginate.call_args.kwargs["filter"] == {"eventTypeCodes": ["X"], "eventStatusCodes": ["open", "upcoming"]}
+        open_call, closed_call = paginator.paginate.call_args_list
+        assert open_call.kwargs["filter"] == {"eventTypeCodes": ["X"], "eventStatusCodes": ["open", "upcoming"]}
+        closed_filter = closed_call.kwargs["filter"]
+        assert closed_filter["eventStatusCodes"] == ["closed"]
+        [time_range] = closed_filter["lastUpdatedTimes"]
+        assert datetime.now(UTC) - time_range["from"] == pytest.approx(timedelta(days=agent.CLOSED_EVENT_DAYS), abs=timedelta(minutes=1))
 
     def test_client_config_sets_timeouts_and_standard_retries(self):
         assert agent.CLIENT_CONFIG.connect_timeout == 5
@@ -133,7 +138,7 @@ class TestFetchTokenEvents:
 
     def test_fails_over_to_secondary_endpoint(self):
         session, _, paginator = _health_client([])
-        paginator.paginate.side_effect = [EndpointConnectionError(endpoint_url="https://health.us-east-1.amazonaws.com"), [{"events": []}]]
+        paginator.paginate.side_effect = [EndpointConnectionError(endpoint_url="https://health.us-east-1.amazonaws.com"), [{"events": []}], [{"events": []}]]
         assert agent.fetch_token_events(session, ["X"]) == []
         assert [c.kwargs["region_name"] for c in session.client.call_args_list] == ["us-east-1", "us-east-2"]
 
@@ -183,6 +188,39 @@ class TestFetchTokenEvents:
         entity_calls = client.get_paginator("describe_affected_entities").paginate.call_args_list
         assert [len(c.kwargs["filter"]["eventArns"]) for c in entity_calls] == [10, 1]
         assert [r["name"] for r in records] == [f"tok-{i}" for i in range(11)]
+
+    def _closed_event(self, expiry: datetime, last_updated: datetime) -> tuple:
+        event = {"arn": ARN, "statusCode": "closed", "lastUpdatedTime": last_updated}
+        return _health_client([], details=[_detail(ARN, f"Your SCIM token expires on {expiry:%Y-%m-%d}.")], closed=[event])
+
+    def test_closed_event_of_expired_token_is_reported(self):
+        expiry = datetime(2026, 1, 10, tzinfo=UTC)
+        session, _, _ = self._closed_event(expiry, last_updated=expiry - timedelta(days=1))
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert record["expiry"] == "2026-01-10T00:00:00+00:00"
+
+    def test_closed_event_of_unexpired_token_is_skipped(self):
+        expiry = datetime.now(UTC) + timedelta(days=40)
+        session, _, _ = self._closed_event(expiry, last_updated=datetime.now(UTC))
+        assert agent.fetch_token_events(session, ["X"]) == []
+
+    def test_closed_event_abandoned_long_before_expiry_is_skipped(self):
+        expiry = datetime(2026, 1, 10, tzinfo=UTC)
+        session, _, _ = self._closed_event(expiry, last_updated=expiry - timedelta(days=20))
+        assert agent.fetch_token_events(session, ["X"]) == []
+
+    def test_closed_event_without_date_is_skipped(self):
+        event = {"arn": ARN, "statusCode": "closed", "lastUpdatedTime": datetime.now(UTC)}
+        session, _, _ = _health_client([], details=[_detail(ARN)], closed=[event])
+        assert agent.fetch_token_events(session, ["X"]) == []
+
+    def test_renewed_events_of_one_token_are_reported_once(self):
+        arns = [f"{ARN}{i}" for i in range(3)]
+        details = [_detail(arn, "Your SCIM token expires on 2026-09-01.") for arn in arns]
+        entities = [{"eventArn": arn, "entityValue": "tok-1"} for arn in arns]
+        session, _, _ = _health_client([{"arn": arn} for arn in arns], details=details, entities=entities)
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert record["source"] == arns[0]
 
     def test_subscription_required(self):
         session, _, paginator = _health_client([])
