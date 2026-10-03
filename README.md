@@ -255,6 +255,12 @@ Supply-chain hardening:
   `release` job has `contents: write`; it runs no repository or dependency
   code.
 - Dependabot waits 7 days after an upstream release before proposing it.
+- The tag ruleset "release tags immutable" (`refs/tags/v*`: deletion, update,
+  force push; no bypass) keeps published release tags from being moved or
+  deleted, also by the CI token. Creating tags cannot be limited to GitHub
+  Actions in a user-owned repository (app bypass actors need an organization),
+  so tag creation is limited only by `contents: write`, which CI grants
+  solely to the `release` job.
 
 ## Release
 
