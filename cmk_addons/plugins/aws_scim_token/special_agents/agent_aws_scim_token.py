@@ -79,11 +79,25 @@ def _dt_to_str(dt: datetime) -> str:
 
 
 def _lookup_secret(reference: str) -> str:
-    """Resolve a Checkmk password store reference of the form ``<id>:<file>``."""
-    from cmk.utils import password_store  # noqa: PLC0415 - only available inside a Checkmk site
+    """Resolve a Checkmk password store reference of the form ``<id>:<file>``.
 
-    pw_id, pw_file = reference.split(":", 1)
-    return str(password_store.lookup(Path(pw_file), pw_id))
+    Uses the public password store API of Checkmk 2.5+ and falls back to the
+    internal one of Checkmk 2.4. Both are only available inside a Checkmk site.
+
+    Raises:
+        ValueError: If the reference cannot be resolved.
+    """
+    try:
+        from cmk.password_store.v1_unstable import PasswordStoreError, dereference_secret  # noqa: PLC0415
+    except ImportError:
+        from cmk.utils import password_store  # noqa: PLC0415
+
+        pw_id, pw_file = reference.split(":", 1)
+        return str(password_store.lookup(Path(pw_file), pw_id))
+    try:
+        return str(dereference_secret(reference).reveal())
+    except PasswordStoreError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def build_session(args: argparse.Namespace) -> boto3.Session:
