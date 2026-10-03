@@ -1,6 +1,8 @@
-# Latest Checkmk 2.5 patch release. The tag floats on purpose; CI pulls it on
-# every build, so it is not managed by Dependabot.
-FROM docker.io/checkmk/check-mk-ultimatemt:2.5.0-latest
+# Latest Checkmk 2.5 patch release. The tag floats on purpose, so it is not
+# managed by Dependabot. CI resolves it to a digest once per run and passes
+# CHECKMK_IMAGE, so tests, MKP build and release all use the same image.
+ARG CHECKMK_IMAGE=docker.io/checkmk/check-mk-ultimatemt:2.5.0-latest
+FROM ${CHECKMK_IMAGE}
 
 # Initialize the CheckMK site at build time so it is cached in the image layer.
 # This avoids the ~25 s penalty of running /docker-entrypoint.sh on every container start.

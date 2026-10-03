@@ -7,13 +7,16 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="/omd/versions/default/bin/python3"
 DEPS_DIR="$(mktemp -d)"
 
-# The "test" dependency group from pyproject.toml (kept current by Dependabot).
-# Read with tomllib because the Checkmk image has no uv.
-TEST_DEPS_LINES="$("${PYTHON}" -c \
-    'import sys, tomllib; print("\n".join(tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"]["test"]))' \
-    "${REPO_DIR}/pyproject.toml")"
-mapfile -t TEST_DEPS <<< "${TEST_DEPS_LINES}"
-"${PYTHON}" -m pip install --quiet --disable-pip-version-check --target "${DEPS_DIR}" "${TEST_DEPS[@]}"
+# Hash-pinned "test" dependency group, exported from uv.lock by the caller
+# (`make test`, CI) because the Checkmk image has no uv:
+#   uv export --locked --only-group test --no-emit-project --format requirements-txt
+TEST_REQUIREMENTS="${TEST_REQUIREMENTS:-/test-requirements.txt}"
+if [[ ! -r "${TEST_REQUIREMENTS}" ]]; then
+    echo "ERROR: ${TEST_REQUIREMENTS} not found; mount the exported test requirements there" >&2
+    exit 1
+fi
+"${PYTHON}" -m pip install --quiet --disable-pip-version-check --root-user-action=ignore \
+    --require-hashes --no-deps --target "${DEPS_DIR}" -r "${TEST_REQUIREMENTS}"
 
 # Fail loudly instead of letting the test modules skip themselves
 "${PYTHON}" -c "import boto3, pydantic, cmk.agent_based.v2, cmk.rulesets.v1, cmk.server_side_calls.v1, cmk.utils.password_store"
