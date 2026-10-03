@@ -96,7 +96,7 @@ Create a rule for the host that represents the AWS account.
 AWS Health data changes at most daily, so a longer check interval for this host
 (e.g. **Setup → Services → Service monitoring rules → Normal check interval for
 service checks**, 30–60 min for `Check_MK`) saves API calls. Every AWS call
-times out after 5 s (connect) / 15 s (read) and is retried up to 3 times.
+times out after 5 s (connect) / 15 s (read), with up to 3 attempts per call.
 If the primary AWS Health endpoint is unreachable, times out, returns a server error or
 throttles, the agent fails over to the partition's secondary endpoint (`us-east-2`).
 
@@ -219,7 +219,7 @@ checkmk-special-agent-aws-scim-token/
 
 ## Development
 
-Python dev dependencies (pytest, ruff, mypy, pre-commit, commitizen) are declared in
+Python dev dependencies (pytest, ruff, pre-commit, commitizen) are declared in
 `pyproject.toml` and pinned in `uv.lock`. Create the local `.venv` and enable
 the hooks in your clone before the first commit:
 
@@ -250,7 +250,7 @@ CI runs exactly the same hooks, so a clean local run means a clean CI run.
 | commitizen | commit message is a [Conventional Commit](https://www.conventionalcommits.org/) (`commit-msg` stage) |
 | gitleaks, detect-private-key | secrets and private keys in staged changes |
 | ruff (check + format) | Python lint and formatting |
-| mypy | type checks for the plugin and build script |
+| mypy | type checks for the plugin and build script (pre-commit only; its version is the hook `rev`, pydantic matches the oldest supported Checkmk) |
 | shellcheck | shell scripts |
 | hadolint | `build/Dockerfile` |
 | actionlint | GitHub Actions workflows |

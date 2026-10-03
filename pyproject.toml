@@ -19,7 +19,6 @@ dev = [
     { include-group = "lint" },
     { include-group = "release" },
     "ruff==0.16.9",
-    "mypy==2.3.1",
 ]
 
 [tool.uv]
@@ -46,13 +45,13 @@ tag_format = "v$version"
 # Target Python 3.12 (Checkmk 2.4 uses Python 3.12)
 target-version = "py312"
 
-# Line length matching black's default
+# Long lines are allowed; Checkmk plugin code favours one call per line
 line-length = 200
 
 # Include all Python files
 include = ["*.py", "*.pyi", "cmk_addons/plugins/*/libexec/*"]
 
-# Exclude build artifacts and caches
+# Exclude caches and packaging artifacts (build/ holds MKP build scripts and is linted)
 exclude = [
     ".git",
     ".tox",
@@ -61,7 +60,6 @@ exclude = [
     "*.egg-info",
     "__pycache__",
     ".pytest_cache",
-    "build",
     "dist",
 ]
 
@@ -88,7 +86,7 @@ select = [
     "RET",    # flake8-return
     "SLF",    # flake8-self
     "SIM",    # flake8-simplify
-    "TCH",    # flake8-type-checking
+    "TC",     # flake8-type-checking
     "ARG",    # flake8-unused-arguments
     "PTH",    # flake8-use-pathlib
     "ERA",    # eradicate (commented-out code)
@@ -116,7 +114,7 @@ unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use assert, magic values, private member access, etc.
-"tests/*" = ["TC003", "S101", "PLR2004", "ARG001", "ARG002", "SLF001", "DTZ001", "PLC0415"]
+"tests/*" = ["TC003", "PLR2004", "ARG001", "ARG002", "SLF001", "DTZ001", "PLC0415"]
 "cmk_addons/**/*.py" = ["DTZ007", "TRY300", "SIM105"]
 
 [tool.ruff.lint.isort]
