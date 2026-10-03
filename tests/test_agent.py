@@ -6,8 +6,9 @@ import json
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import boto3
 import pytest
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 
 from cmk_addons.plugins.aws_scim_token.special_agents import agent_aws_scim_token as agent
 
@@ -61,14 +62,20 @@ class TestParseArguments:
 
 def _health_client(events, details=None, failed=None, entities=None):
     client = MagicMock()
-    paginator = MagicMock()
-    paginator.paginate.return_value = [{"events": events}]
-    client.get_paginator.return_value = paginator
+    paginators = {"describe_events": MagicMock(), "describe_affected_entities": MagicMock()}
+    paginators["describe_events"].paginate.return_value = [{"events": events}]
+    paginators["describe_affected_entities"].paginate.return_value = [{"entities": entities or []}]
+    client.get_paginator.side_effect = paginators.__getitem__
     client.describe_event_details.return_value = {"successfulSet": details or [], "failedSet": failed or []}
-    client.describe_affected_entities.return_value = {"entities": entities or []}
     session = MagicMock()
+    session.region_name = "eu-west-1"
+    session.get_partition_for_region.return_value = "aws"
     session.client.return_value = client
-    return session, client, paginator
+    return session, client, paginators["describe_events"]
+
+
+def _detail(arn, description="Rotate soon."):
+    return {"event": {"arn": arn}, "eventDescription": {"latestDescription": description}}
 
 
 class TestFetchTokenEvents:
@@ -79,24 +86,53 @@ class TestFetchTokenEvents:
     def test_filters_by_event_type_code_on_global_endpoint(self):
         session, _, paginator = _health_client([])
         agent.fetch_token_events(session, ["X"])
-        session.client.assert_called_once_with("health", region_name="us-east-1")
+        session.client.assert_called_once_with("health", region_name="us-east-1", config=agent.CLIENT_CONFIG)
         assert paginator.paginate.call_args.kwargs["filter"] == {"eventTypeCodes": ["X"], "eventStatusCodes": ["open", "upcoming"]}
+
+    def test_client_config_sets_timeouts_and_standard_retries(self):
+        assert agent.CLIENT_CONFIG.connect_timeout == 5
+        assert agent.CLIENT_CONFIG.read_timeout == 15
+        assert agent.CLIENT_CONFIG.retries == {"mode": "standard", "max_attempts": 3}
+
+    @pytest.mark.parametrize(
+        ("region", "expected"),
+        [("eu-central-1", ("us-east-1", "us-east-2")), ("cn-north-1", ("cn-northwest-1",)), ("us-gov-east-1", ("us-gov-west-1",))],
+    )
+    def test_health_region_follows_partition(self, region, expected):
+        assert agent._health_regions(boto3.Session(region_name=region)) == expected
+
+    def test_fails_over_to_secondary_endpoint(self):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = [EndpointConnectionError(endpoint_url="https://health.us-east-1.amazonaws.com"), [{"events": []}]]
+        assert agent.fetch_token_events(session, ["X"]) == []
+        assert [c.kwargs["region_name"] for c in session.client.call_args_list] == ["us-east-1", "us-east-2"]
+
+    def test_connection_error_on_all_endpoints_is_reported(self):
+        session, _, paginator = _health_client([])
+        paginator.paginate.side_effect = EndpointConnectionError(endpoint_url="https://health.amazonaws.com")
+        [record] = agent.fetch_token_events(session, ["X"])
+        assert "Could not connect" in record["error"]
 
     def test_expiry_from_description_not_end_time(self):
         event = {"arn": ARN, "endTime": datetime(2030, 1, 1, tzinfo=UTC)}
         detail = {"event": event, "eventDescription": {"latestDescription": "Your SCIM token\nexpires on 2026-09-01."}}
-        session, _, _ = _health_client([event], details=[detail], entities=[{"entityValue": "tok-1"}])
+        session, _, _ = _health_client([event], details=[detail], entities=[{"eventArn": ARN, "entityValue": "tok-1"}])
 
         [record] = agent.fetch_token_events(session, ["X"])
         assert record == {"name": "tok-1", "expiry": "2026-09-01T00:00:00+00:00", "source": ARN, "detail": "Your SCIM token expires on 2026-09-01."}
 
     def test_no_date_in_description_yields_null_expiry(self):
-        event = {"arn": ARN}
-        detail = {"event": event, "eventDescription": {"latestDescription": "Rotate soon."}}
-        session, _, _ = _health_client([event], details=[detail])
+        session, _, _ = _health_client([{"arn": ARN}], details=[_detail(ARN)])
 
         [record] = agent.fetch_token_events(session, ["X"])
         assert record["expiry"] is None
+        assert record["name"] == "abc"
+
+    def test_entity_lookup_failure_falls_back_to_arn_suffix(self):
+        session, client, _ = _health_client([{"arn": ARN}], details=[_detail(ARN)])
+        client.get_paginator("describe_affected_entities").paginate.side_effect = ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "DescribeAffectedEntities")
+
+        [record] = agent.fetch_token_events(session, ["X"])
         assert record["name"] == "abc"
 
     def test_failed_details_reported_once(self):
@@ -107,11 +143,16 @@ class TestFetchTokenEvents:
         assert len(records) == 1
         assert "boom" in records[0]["error"]
 
-    def test_details_batched_by_ten(self):
-        events = [{"arn": f"{ARN}{i}"} for i in range(11)]
-        session, client, _ = _health_client(events)
-        agent.fetch_token_events(session, ["X"])
+    def test_details_and_entities_batched_by_ten(self):
+        arns = [f"{ARN}{i}" for i in range(11)]
+        entities = [{"eventArn": arn, "entityValue": f"tok-{i}"} for i, arn in enumerate(arns)]
+        session, client, _ = _health_client([{"arn": arn} for arn in arns], details=[_detail(arn) for arn in arns], entities=entities)
+
+        records = agent.fetch_token_events(session, ["X"])
         assert [len(c.kwargs["eventArns"]) for c in client.describe_event_details.call_args_list] == [10, 1]
+        entity_calls = client.get_paginator("describe_affected_entities").paginate.call_args_list
+        assert [len(c.kwargs["filter"]["eventArns"]) for c in entity_calls] == [10, 1]
+        assert [r["name"] for r in records] == [f"tok-{i}" for i in range(11)]
 
     def test_subscription_required(self):
         session, _, paginator = _health_client([])
@@ -143,6 +184,7 @@ class TestBuildSession:
         with patch.object(agent.boto3, "Session", side_effect=[initial, MagicMock()]):
             agent.build_session(args)
         sts.assume_role.assert_called_once_with(RoleArn="arn:aws:iam::1:role/R", RoleSessionName="checkmk-scim-monitor", ExternalId="ext")
+        initial.client.assert_called_once_with("sts", config=agent.CLIENT_CONFIG)
 
     def test_assume_role_without_external_id(self):
         sts = MagicMock()

@@ -25,7 +25,7 @@ def _parameter_form() -> Dictionary:
                 required=True,
                 parameter_form=String(
                     title=Title("AWS Region"),
-                    help_text=Help("Region used for STS calls. AWS Health always uses its global endpoint in us-east-1."),
+                    help_text=Help("Region used for STS calls. AWS Health is queried at the endpoint of this region's partition (us-east-1 for commercial regions)."),
                     prefill=DefaultValue("us-east-1"),
                     field_size=FieldSize.SMALL,
                     custom_validate=_NON_EMPTY,

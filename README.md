@@ -79,12 +79,17 @@ Create a rule for the host that represents the AWS account.
 
 | Field | Description |
 |-------|-------------|
-| **AWS Region** | Region for STS calls (AWS Health always uses `us-east-1`) |
+| **AWS Region** | Region for STS calls. Its partition selects the AWS Health endpoint: `us-east-1` (failover `us-east-2`), `cn-northwest-1` for China, `us-gov-west-1` for GovCloud |
 | **Static access key** | Access Key ID + Secret Access Key. Leave unset to use the instance profile or environment. The secret is passed to the agent as a password store reference, never in plain text on the command line. |
 | **Assume Role → Role ARN** | IAM role to assume before querying AWS (cross-account or least-privilege) |
 | **Assume Role → External ID** | Required if the role's trust policy has an `sts:ExternalId` condition |
 | **Assume Role → Session Name** | STS session name (default: `checkmk-scim-monitor`) |
 | **Override AWS Health event type codes** | Only needed if AWS renames the event (default: `AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFICATION`) |
+
+AWS Health data changes at most daily, so a longer check interval for this host
+(e.g. **Setup → Services → Service monitoring rules → Normal check interval for
+service checks**, 30–60 min for `Check_MK`) saves API calls. Every AWS call
+times out after 5 s (connect) / 15 s (read) and is retried up to 3 times.
 
 ### 2. Set check parameters (optional)
 
