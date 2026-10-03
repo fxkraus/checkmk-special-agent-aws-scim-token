@@ -50,6 +50,9 @@ _MONTH = r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?"
 _MONTH_DAY_YEAR_RE = re.compile(_MONTH + r"\s+(\d{1,2}),?\s+(\d{4})\b", re.IGNORECASE)
 _DAY_MONTH_YEAR_RE = re.compile(r"\b(\d{1,2})\s+" + _MONTH + r",?\s+(\d{4})\b", re.IGNORECASE)
 _EXPIRY_KEYWORD_RE = re.compile(r"\bexpir\w*", re.IGNORECASE)
+# AWS error messages name the caller (account ID, role, session); keep them out of service output
+_ARN_RE = re.compile(r"\barn:aws[\w-]*:[^\s,;'\"]+")
+_ACCOUNT_ID_RE = re.compile(r"\b\d{12}\b")
 EXPIRY_DATE_WINDOW = 80  # max. characters between "expires" and the date it refers to
 CLOSED_EVENT_DAYS = 30  # report an expired token for this long after AWS closed its event
 # AWS renews the event daily until expiry; a closed event updated this close to its
@@ -95,6 +98,10 @@ def _dt_from_text(text: str) -> datetime | None:
             if keyword.end() <= pos <= keyword.end() + EXPIRY_DATE_WINDOW:
                 return dt
     return dates[0][1] if dates else None
+
+
+def _redact(text: str) -> str:
+    return _ACCOUNT_ID_RE.sub("<account>", _ARN_RE.sub("<arn>", text))
 
 
 def _dt_to_str(dt: datetime) -> str:
@@ -271,10 +278,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         session = build_session(args)
     except (ClientError, BotoCoreError, ValueError) as exc:
-        sys.stderr.write(f"ERROR: Failed to create AWS session: {exc}\n")
+        sys.stderr.write(f"ERROR: Failed to create AWS session: {_redact(str(exc))}\n")
         return 1
 
     print(SECTION_HEADER)
     for record in fetch_token_events(session, args.event_type_codes):
+        if "error" in record:
+            record["error"] = _redact(record["error"])
         print(json.dumps(record))
     return 0

@@ -303,6 +303,27 @@ class TestMain:
             agent.main([])
         assert json.loads(capsys.readouterr().out.splitlines()[1]) == record
 
+    def test_error_records_hide_caller_arn_and_account_id(self, capsys):
+        message = "An error occurred (AccessDenied) when calling the DescribeEvents operation: User: arn:aws:sts::123456789012:assumed-role/Mon/s is not authorized"
+        with patch.object(agent, "build_session"), patch.object(agent, "fetch_token_events", return_value=[{"error": message}]):
+            agent.main([])
+        error = json.loads(capsys.readouterr().out.splitlines()[1])["error"]
+        assert error == "An error occurred (AccessDenied) when calling the DescribeEvents operation: User: <arn> is not authorized"
+
+    def test_token_records_are_not_redacted(self, capsys):
+        record = {"name": "t", "expiry": None, "source": ARN, "detail": "account 123456789012"}
+        with patch.object(agent, "build_session"), patch.object(agent, "fetch_token_events", return_value=[dict(record)]):
+            agent.main([])
+        assert json.loads(capsys.readouterr().out.splitlines()[1]) == record
+
+    def test_session_failure_hides_account_id(self, capsys):
+        error = ClientError({"Error": {"Code": "AccessDenied", "Message": "not authorized to assume arn:aws:iam::123456789012:role/R in 123456789012"}}, "AssumeRole")
+        with patch.object(agent, "build_session", side_effect=error):
+            assert agent.main([]) == 1
+        err = capsys.readouterr().err
+        assert "123456789012" not in err
+        assert "assume <arn> in <account>" in err
+
     def test_session_failure_exits_non_zero(self, capsys):
         error = ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "AssumeRole")
         with patch.object(agent, "build_session", side_effect=error):
