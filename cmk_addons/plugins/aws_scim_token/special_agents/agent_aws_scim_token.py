@@ -3,7 +3,10 @@
 AWS raises the AWS Health event
 ``AWS_IAMIDENTITYCENTER_SCIM_BEARER_TOKEN_EXPIRY_NOTIFICATION`` (service
 ``IAMIDENTITYCENTER``, category ``accountNotification``) once a SCIM access
-token is 90 days or less from expiry. This agent reports every open event.
+token is 90 days or less from expiry and renews it until the token expires.
+This agent reports every open event, plus recently closed events of tokens
+that AWS tracked until they expired, so an expired token does not turn OK
+once AWS stops renewing its event.
 
 Notes:
   - The AWS Health API requires a Business, Enterprise On-Ramp, or Enterprise
@@ -19,7 +22,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +51,10 @@ _MONTH_DAY_YEAR_RE = re.compile(_MONTH + r"\s+(\d{1,2}),?\s+(\d{4})\b", re.IGNOR
 _DAY_MONTH_YEAR_RE = re.compile(r"\b(\d{1,2})\s+" + _MONTH + r",?\s+(\d{4})\b", re.IGNORECASE)
 _EXPIRY_KEYWORD_RE = re.compile(r"\bexpir\w*", re.IGNORECASE)
 EXPIRY_DATE_WINDOW = 80  # max. characters between "expires" and the date it refers to
+CLOSED_EVENT_DAYS = 30  # report an expired token for this long after AWS closed its event
+# AWS renews the event daily until expiry; a closed event updated this close to its
+# expiry was tracked until the token expired rather than closed by rotation or deletion
+CLOSED_EVENT_EXPIRY_GRACE = timedelta(days=2)
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -166,13 +173,27 @@ def _token_names(client: Any, arns: list[str]) -> dict[str, str]:
     return names
 
 
+def _list_events(client: Any, event_filter: dict[str, Any]) -> list[dict[str, Any]]:
+    return [event for page in client.get_paginator("describe_events").paginate(filter=event_filter) for event in page.get("events", [])]
+
+
+def _is_reportable(event: dict[str, Any], expiry: datetime | None, now: datetime) -> bool:
+    """Open events are always reported; closed ones only if AWS tracked the token until it expired."""
+    if event.get("statusCode") != "closed":
+        return True
+    last_updated = event.get("lastUpdatedTime")
+    return expiry is not None and last_updated is not None and last_updated >= expiry - CLOSED_EVENT_EXPIRY_GRACE and expiry <= now
+
+
 def _describe_token_events(client: Any, event_type_codes: list[str]) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    event_filter = {"eventTypeCodes": event_type_codes, "eventStatusCodes": ["open", "upcoming"]}
-    for page in client.get_paginator("describe_events").paginate(filter=event_filter):
-        events.extend(page.get("events", []))
+    now = datetime.now(UTC)
+    events = _list_events(client, {"eventTypeCodes": event_type_codes, "eventStatusCodes": ["open", "upcoming"]})
+    closed_since = now - timedelta(days=CLOSED_EVENT_DAYS)
+    events += _list_events(client, {"eventTypeCodes": event_type_codes, "eventStatusCodes": ["closed"], "lastUpdatedTimes": [{"from": closed_since}]})
+    events_by_arn = {event["arn"]: event for event in events}
 
     results: list[dict[str, Any]] = []
+    reported: set[tuple[str, datetime | None]] = set()
     for offset in range(0, len(events), BATCH_SIZE):
         arns = [e["arn"] for e in events[offset : offset + BATCH_SIZE]]
         resp = client.describe_event_details(eventArns=arns, locale="en")
@@ -185,9 +206,14 @@ def _describe_token_events(client: Any, event_type_codes: list[str]) -> list[dic
                 continue
             description = details[arn].get("eventDescription", {}).get("latestDescription", "")
             expiry = _dt_from_text(description)
+            name = names.get(arn, arn.rsplit("/", 1)[-1])
+            # Renewed events repeat the same token and expiry
+            if not _is_reportable(events_by_arn[arn], expiry, now) or (name, expiry) in reported:
+                continue
+            reported.add((name, expiry))
             results.append(
                 {
-                    "name": names.get(arn, arn.rsplit("/", 1)[-1]),
+                    "name": name,
                     "expiry": _dt_to_str(expiry) if expiry else None,
                     "source": arn,
                     "detail": " ".join(description.split())[:200],
@@ -197,7 +223,7 @@ def _describe_token_events(client: Any, event_type_codes: list[str]) -> list[dic
 
 
 def fetch_token_events(session: boto3.Session, event_type_codes: list[str]) -> list[dict[str, Any]]:
-    """Return one record per open SCIM token expiry event, or an error record.
+    """Return one record per SCIM token with an expiry event, or an error record.
 
     Fails over to the next Health endpoint of the partition if one cannot be reached.
     """
