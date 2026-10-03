@@ -12,12 +12,20 @@ on:
 permissions:
   contents: read
 
+# One run per ref at a time; outdated pull request runs are cancelled. On
+# main, runs queue, so releases never race for the same version.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Runs exactly the hooks from .pre-commit-config.yaml
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Cache pre-commit environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -42,6 +50,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e  # v3.0.0
@@ -52,33 +61,69 @@ jobs:
           # PR comments would need pull-requests: write
           GITLEAKS_ENABLE_COMMENTS: "false"
 
-  # Python tests against the real Checkmk libraries of every supported
-  # version. -latest tags keep the matrix free of version maintenance.
+  # Resolves the floating -latest Checkmk tags (no version maintenance) to
+  # digests once per run, so tests, MKP build and release use the same images.
+  images:
+    runs-on: ubuntu-latest
+    outputs:
+      checkmk24: ${{ steps.resolve.outputs.checkmk24 }}
+      checkmk25: ${{ steps.resolve.outputs.checkmk25 }}
+    steps:
+      - name: Resolve Checkmk image digests
+        id: resolve
+        run: |
+          resolve() {
+            local digest
+            digest=$(docker buildx imagetools inspect "$2" --format '{{json .Manifest}}' | jq -r .digest)
+            [[ "${digest}" == sha256:* ]] || { echo "Cannot resolve $2" >&2; return 1; }
+            echo "$1=${2%:*}@${digest}" | tee -a "${GITHUB_OUTPUT}"
+          }
+          resolve checkmk24 docker.io/checkmk/check-mk-cloud:2.4.0-latest
+          # Same edition as the MKP build image (build/Dockerfile)
+          resolve checkmk25 docker.io/checkmk/check-mk-ultimatemt:2.5.0-latest
+
+  # Python tests against the real Checkmk libraries of every supported version
   pytest:
     name: pytest (Checkmk ${{ matrix.checkmk }})
+    needs: images
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - checkmk: "2.4"
-            image: docker.io/checkmk/check-mk-cloud:2.4.0-latest
+            image: checkmk24
           - checkmk: "2.5"
-            # Same edition as the MKP build image (build/Dockerfile)
-            image: docker.io/checkmk/check-mk-ultimatemt:2.5.0-latest
+            image: checkmk25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      # The Checkmk image has no uv; run-pytest.sh installs only these hash-pinned packages
+      - name: Export hash-pinned test dependencies
+        run: uv export --locked --only-group test --no-emit-project --format requirements-txt -o "${RUNNER_TEMP}/test-requirements.txt"
+
       - name: Run pytest
-        run: docker run --rm -v "$PWD:/source:ro" --entrypoint /source/tests/run-pytest.sh "$IMAGE"
+        run: |
+          echo "Image: ${IMAGE}"
+          docker run --rm -v "$PWD:/source:ro" -v "${RUNNER_TEMP}/test-requirements.txt:/test-requirements.txt:ro" \
+            --entrypoint /source/tests/run-pytest.sh "$IMAGE"
         env:
-          IMAGE: ${{ matrix.image }}
+          IMAGE: ${{ needs.images.outputs[matrix.image] }}
 
   # Packages the MKP with the latest Checkmk 2.5 patch release (build/Dockerfile).
   # On main, the MKP is kept as a workflow artifact for each commit.
   mkp:
+    needs: images
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -88,6 +133,7 @@ jobs:
         with:
           context: .
           file: build/Dockerfile
+          build-args: CHECKMK_IMAGE=${{ needs.images.outputs.checkmk25 }}
           tags: checkmk-aws-scim-token-build:ci
           load: true
           pull: true
@@ -95,7 +141,11 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build MKP
-        run: docker run --rm -v "$PWD:/source" checkmk-aws-scim-token-build:ci
+        run: |
+          echo "Image: ${CHECKMK_IMAGE}"
+          docker run --rm -v "$PWD:/source" checkmk-aws-scim-token-build:ci
+        env:
+          CHECKMK_IMAGE: ${{ needs.images.outputs.checkmk25 }}
 
       - name: Upload MKP
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -109,21 +159,23 @@ jobs:
   # Releases from Conventional Commits once every other job passed on main:
   # fix/perf/refactor → patch, feat → minor, "!" or BREAKING CHANGE → major;
   # docs/ci/build/chore/test commits alone produce no release. The version
-  # exists only as the git tag, which the MKP build reads. Tags created with
-  # GITHUB_TOKEN trigger no further workflows, so build and release happen here.
-  release:
+  # exists only as the git tag, which the MKP build reads.
+  #
+  # Split in two jobs so that no step running dependency code (commitizen,
+  # the Checkmk image) has a write-scoped token: release-build derives the
+  # version and builds the MKP read-only from the image digest the other jobs
+  # tested; release only publishes the uploaded files.
+  release-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, secrets, pytest, mkp]
+    needs: [images, lint, secrets, pytest, mkp]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write   # create the tag and the GitHub release
-    concurrency:
-      group: release
-      cancel-in-progress: false
+    outputs:
+      next: ${{ steps.version.outputs.next }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0   # all commits and tags to derive the next version
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
@@ -133,6 +185,7 @@ jobs:
         id: version
         run: |
           set -o pipefail
+          mkdir -p release
           if last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); then
             rc=0
             next=$(uv run --locked --only-group release cz bump --get-next) || rc=$?
@@ -147,7 +200,7 @@ jobs:
             range=()
           fi
           uv run --locked --only-group release cz changelog --dry-run \
-            --unreleased-version "v${next}" "${range[@]}" | tail -n +2 > "${RUNNER_TEMP}/notes.md"
+            --unreleased-version "v${next}" "${range[@]}" | tail -n +2 > release/notes.md
           echo "Next version: ${next}"
           echo "next=${next}" >> "${GITHUB_OUTPUT}"
 
@@ -161,6 +214,7 @@ jobs:
         with:
           context: .
           file: build/Dockerfile
+          build-args: CHECKMK_IMAGE=${{ needs.images.outputs.checkmk25 }}
           tags: checkmk-aws-scim-token-build:ci
           load: true
           pull: true
@@ -170,14 +224,42 @@ jobs:
       - name: Build MKP
         if: steps.version.outputs.next
         run: |
+          echo "Image: ${CHECKMK_IMAGE}"
           git tag "v${NEXT}"
           docker run --rm -v "$PWD:/source" checkmk-aws-scim-token-build:ci
+          mv ./*.mkp release/
         env:
+          CHECKMK_IMAGE: ${{ needs.images.outputs.checkmk25 }}
           NEXT: ${{ steps.version.outputs.next }}
 
-      - name: Create release
+      - name: Upload release files
         if: steps.version.outputs.next
-        run: gh release create "v${NEXT}" ./*.mkp --target "${GITHUB_SHA}" --title "v${NEXT}" --notes-file "${RUNNER_TEMP}/notes.md"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: release-v${{ steps.version.outputs.next }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs no repository or dependency code: publishes the files built above.
+  # Tags created with GITHUB_TOKEN trigger no further workflows.
+  release:
+    needs: release-build
+    if: needs.release-build.outputs.next
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the tag and the GitHub release
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: release-v${{ needs.release-build.outputs.next }}
+          path: release
+
+      - name: Create release
+        run: |
+          gh release create "v${NEXT}" release/*.mkp --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" \
+            --title "v${NEXT}" --notes-file release/notes.md
         env:
-          NEXT: ${{ steps.version.outputs.next }}
+          NEXT: ${{ needs.release-build.outputs.next }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

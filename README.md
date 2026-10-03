@@ -188,7 +188,7 @@ checkmk-special-agent-aws-scim-token/
 ├── .github/
 │   ├── dependabot.yml                          # Weekly uv, pre-commit and Actions updates
 │   └── workflows/
-│       ├── ci.yml                              # Lint, secret scan, tests (CMK 2.4 + 2.5), MKP build, release
+│       ├── ci.yml                              # Lint, secret scan, image digests, tests (CMK 2.4 + 2.5), MKP build, release
 │       ├── pr-title.yml                        # PR title must be a Conventional Commit
 │       └── dependabot-auto-merge.yml           # Auto-merge minor/patch uv + pre-commit updates
 ├── .pre-commit-config.yaml                     # Linters + secret scan (local and CI)
@@ -213,7 +213,7 @@ uv run pre-commit install
 | `make lint` | Run all pre-commit hooks (same as the CI `lint` job) |
 | `make secrets` | Scan the full git history for secrets (gitleaks, Docker) |
 | `make format` | Format and autofix Python code with ruff |
-| `make test` | Run pytest with the real Checkmk libraries inside the build image |
+| `make test` | Run pytest with the real Checkmk libraries inside the build image (hash-pinned test deps from `uv.lock`) |
 | `make build` | Build the MKP (`./aws_scim_token-<version>.mkp`) in the Checkmk image |
 
 The tests import the real `cmk` libraries, so they run inside a Checkmk image,
@@ -244,6 +244,18 @@ run `pr-title`. For Dependabot auto-merge to wait for them, enable
 **Settings → General → Allow auto-merge** and add a branch ruleset on `main`
 that requires these checks.
 
+Supply-chain hardening:
+
+- The `images` job resolves the floating `checkmk/*:2.x.0-latest` tags to
+  digests once per run; tests, MKP build and release all use these digests
+  (printed as `Image: …@sha256:…` in the logs).
+- The test dependencies are installed with `pip --require-hashes` from
+  `uv export` of `uv.lock`, including all transitive packages.
+- No checkout keeps the `GITHUB_TOKEN` in `.git/config`, and only the final
+  `release` job has `contents: write`; it runs no repository or dependency
+  code.
+- Dependabot waits 7 days after an upstream release before proposing it.
+
 ## Release
 
 Releases are fully automatic. Pull requests are squash-merged with only the
@@ -260,8 +272,9 @@ from the commits since the last `v*` tag:
 | `feat!:`, `fix!:` or a `BREAKING CHANGE:` footer | major (`1.0.0` → `2.0.0`) |
 | `docs:`, `ci:`, `build:`, `chore:`, `style:`, `test:` | no release |
 
-It then tags the commit, builds the MKP with the real `mkp` tool in the
-Checkmk 2.5 image and publishes a GitHub Release with the MKP and release
+It then builds the MKP with the real `mkp` tool in the same Checkmk 2.5
+image the other jobs tested (`release-build`, read-only), and the `release`
+job tags the commit and publishes a GitHub Release with the MKP and release
 notes generated from the commits. The version exists only as the git tag;
 nothing is committed back. The [Releases](https://github.com/fxkraus/checkmk-special-agent-aws-scim-token/releases)
 page is the changelog. Untagged builds get a numeric version derived from the

@@ -36,8 +36,10 @@ format:
 
 test:
 	@echo "==> Running pytest inside the Checkmk build image..."
+	uv export --quiet --locked --only-group test --no-emit-project --format requirements-txt -o .test-requirements.txt
 	docker build $(BUILD_ARGS) -t $(BUILD_IMAGE) -f build/Dockerfile .
-	docker run --rm -v "$$PWD:/source:ro" --entrypoint /source/tests/run-pytest.sh $(BUILD_IMAGE)
+	docker run --rm -v "$$PWD:/source:ro" -v "$$PWD/.test-requirements.txt:/test-requirements.txt:ro" \
+		--entrypoint /source/tests/run-pytest.sh $(BUILD_IMAGE)
 
 build:
 	@echo "==> Building MKP package..."
@@ -54,6 +56,6 @@ build:
 
 clean:
 	@echo "==> Cleaning build artifacts..."
-	rm -f *.mkp
+	rm -f *.mkp .test-requirements.txt
 	rm -rf .pytest_cache .mypy_cache .ruff_cache
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

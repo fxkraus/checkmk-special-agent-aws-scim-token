@@ -9,6 +9,7 @@ __pycache__/
 
 # Build artefacts
 *.mkp
+.test-requirements.txt
 
 # Editors
 .vscode/

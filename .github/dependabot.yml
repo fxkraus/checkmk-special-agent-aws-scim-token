@@ -6,6 +6,9 @@
 # (.github/workflows/dependabot-auto-merge.yml) once the CI checks pass; GitHub
 # Actions updates and all major updates need a manual review.
 #
+# The 7-day cooldown keeps brand-new upstream releases (the window in which
+# compromised packages are usually detected and yanked) out of the PRs.
+#
 # The Checkmk build image (build/Dockerfile) uses the floating 2.5.0-latest
 # tag on purpose (latest stable patch release), so there is no Docker entry.
 # Do not pin it for Dependabot: it compares 2.5.0pNN as a pre-release of 2.5.0
@@ -19,6 +22,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
@@ -32,6 +37,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
@@ -45,6 +52,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       minor-and-patch:
         update-types:
