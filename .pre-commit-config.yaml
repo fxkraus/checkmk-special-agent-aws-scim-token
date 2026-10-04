@@ -53,7 +53,7 @@ repos:
         # pydantic of the oldest supported Checkmk (2.4.0 ships 2.10.3), so type
         # checks catch newer APIs; bump with "version.min_required" in
         # build/build-modify-extension.py
-        additional_dependencies: ["pydantic==2.10.3"]
+        additional_dependencies: ["pydantic==2.13.5"]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: 745eface02aef23e168a8afb6b5737818efbea95  # frozen: v0.11.0.1
