@@ -13,12 +13,12 @@ test = ["pytest==9.1.1"]
 # Used by the CI lint job
 lint = ["pre-commit==4.6.2"]
 # Used by the CI release job to derive the next version from the commits
-release = ["commitizen==4.19.1"]
+release = ["commitizen==4.19.2"]
 dev = [
     { include-group = "test" },
     { include-group = "lint" },
     { include-group = "release" },
-    "ruff==0.16.10",
+    "ruff==0.17.0",
 ]
 
 [tool.uv]
