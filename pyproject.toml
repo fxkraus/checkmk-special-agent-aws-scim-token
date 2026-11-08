@@ -9,7 +9,7 @@ requires-python = ">=3.12"
 
 [dependency-groups]
 # Installed into the Checkmk interpreter by tests/run-pytest.sh
-test = ["pytest==9.1.1"]
+test = ["pytest==9.2.0"]
 # Used by the CI lint job
 lint = ["pre-commit==4.7.0"]
 # Used by the CI release job to derive the next version from the commits
@@ -18,7 +18,7 @@ dev = [
     { include-group = "test" },
     { include-group = "lint" },
     { include-group = "release" },
-    "ruff==0.17.2",
+    "ruff==0.17.3",
 ]
 
 [tool.uv]
