@@ -11,7 +11,7 @@ default_install_hook_types: [pre-commit, commit-msg]
 repos:
   # Commit messages must be Conventional Commits; they drive the releases
   - repo: https://github.com/commitizen-tools/commitizen
-    rev: 3f5ccc87b27966d9ed21cf5ea8ec2fba38ca65ce  # frozen: v4.19.0
+    rev: f690817de25831a37094ca35af5ada05c909ff1c  # frozen: v4.19.3
     hooks:
       - id: commitizen
 
